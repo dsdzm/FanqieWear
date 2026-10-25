@@ -84,6 +84,8 @@ fun ReaderScreen(
     source: Source,
     onBack: () -> Unit,
     onOpenChapters: () -> Unit,
+    onLogin: () -> Unit = {},
+    onOpenTtsSettings: () -> Unit = {},
 ) {
     val dims = rememberDeviceDims()
     val settings by app.settings.state.collectAsStateWithLifecycle()
@@ -99,6 +101,7 @@ fun ReaderScreen(
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var fromLocal by remember { mutableStateOf(false) }
+    var locked by remember { mutableStateOf(false) }
     var retry by remember { mutableIntStateOf(0) }
 
     var page by remember(currentId) { mutableIntStateOf(0) }
@@ -117,7 +120,7 @@ fun ReaderScreen(
     val paraGap = listOf(3.dp, 6.dp, 10.dp).getOrElse(settings.paraStep) { 6.dp }
 
     // 载入正文：先看本地离线，再走网络
-    LaunchedEffect(currentId, retry, source) {
+    LaunchedEffect(currentId, retry, source, settings.cookie) {
         loading = true
         error = null
         content = ""
@@ -128,6 +131,7 @@ fun ReaderScreen(
             prevId = local.prevId
             nextId = local.nextId
             fromLocal = true
+            locked = false
             loading = false
             app.shelf.saveProgress(Progress(bookId, currentId, local.title, 0))
             return@LaunchedEffect
@@ -144,6 +148,7 @@ fun ReaderScreen(
                 content = it.content
                 prevId = it.prevId
                 nextId = it.nextId
+                locked = it.locked
                 app.shelf.saveProgress(
                     Progress(
                         bookId = if (it.bookId.isNotBlank()) it.bookId else bookId,
@@ -226,6 +231,11 @@ fun ReaderScreen(
 
     val listState = rememberLazyListState()
 
+    // 切章后回到顶部：滚动模式下自动下一章、点按/表冠翻章都走这里
+    LaunchedEffect(currentId) {
+        runCatching { listState.scrollToItem(0) }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -284,19 +294,19 @@ fun ReaderScreen(
             )
         }
 
-        if (!ttsState.ready || ttsState.error != null) {
+        if (ttsState.error != null) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = dims.sidePadding, vertical = 2.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(LocalPalette.current.accentSoft)
-                    .clickable { com.fanqie.wear.tts.TtsEngines.openSettings(context) }
+                    .clickable { onOpenTtsSettings() }
                     .padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = (ttsState.error ?: "未检测到语音引擎") + " · 点此安装",
+                    text = "语音引擎未就绪 · 点此下载安装",
                     fontSize = dims.label,
                     color = LocalPalette.current.accent,
                     maxLines = 1,
@@ -329,6 +339,27 @@ fun ReaderScreen(
                     fontSize = dims.label,
                     color = LocalPalette.current.accent,
                 )
+            }
+        }
+
+        if (locked) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = dims.sidePadding, vertical = 2.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(LocalPalette.current.accentSoft)
+                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = if (settings.cookie.isBlank()) "未登录，本章只有试读" else "登录态失效或无权限",
+                    fontSize = dims.label,
+                    color = LocalPalette.current.accent,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f),
+                )
+                Pill(text = "去登录", selected = true, compact = true, onClick = onLogin)
             }
         }
 

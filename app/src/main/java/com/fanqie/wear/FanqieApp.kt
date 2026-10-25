@@ -8,6 +8,8 @@ import com.fanqie.wear.data.FontDecoder
 import com.fanqie.wear.data.QimaoApi
 import com.fanqie.wear.data.SettingsStore
 import com.fanqie.wear.data.ShelfStore
+import com.fanqie.wear.tts.FanqieTtsBridge
+import com.fanqie.wear.tts.TtsInstaller
 import com.fanqie.wear.tts.TtsPlayer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +31,8 @@ class FanqieApp : Application() {
         private set
     lateinit var downloader: DownloadManager
         private set
+    lateinit var ttsInstaller: TtsInstaller
+        private set
 
     /** 应用级作用域：下载等长任务不随页面销毁 */
     val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -37,13 +41,15 @@ class FanqieApp : Application() {
         super.onCreate()
         instance = this
         FontDecoder.load(this)
-        api = FanqieApi(this)
+        settings = SettingsStore(this)
+        api = FanqieApi(this) { settings.value.cookie }
         qimao = QimaoApi(this)
         shelf = ShelfStore(this)
-        settings = SettingsStore(this)
         tts = TtsPlayer(this)
         downloads = DownloadStore(this)
         downloader = DownloadManager(api, downloads, scope)
+        ttsInstaller = TtsInstaller(this, scope) { pkg -> tts.refresh(pkg) }
+        FanqieTtsBridge.installer = ttsInstaller
     }
 
     companion object {

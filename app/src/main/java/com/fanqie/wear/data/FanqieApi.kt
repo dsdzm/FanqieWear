@@ -25,7 +25,10 @@ class ApiException(message: String) : Exception(message)
  * 不依赖任何第三方中转服务。榜单与书库接口返回的书名/作者是字体加密的，
  * 统一交给 [FontDecoder] 还原；搜索、目录、正文、推荐流本身是明文。
  */
-class FanqieApi(private val context: Context) {
+class FanqieApi(
+    private val context: Context,
+    private val cookieProvider: () -> String = { "" },
+) {
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(12, TimeUnit.SECONDS)
@@ -47,14 +50,18 @@ class FanqieApi(private val context: Context) {
     // ---------------- 网络 ----------------
 
     private suspend fun raw(url: String, cacheable: Boolean = true): String = withContext(Dispatchers.IO) {
-        cache[url]?.let { (at, body) -> if (System.currentTimeMillis() - at < 120_000) return@withContext body }
+        val cookie = cookieProvider()
+        val key = if (cookie.isBlank()) url else "$url#${cookie.hashCode()}"
+        cache[key]?.let { (at, body) -> if (System.currentTimeMillis() - at < 120_000) return@withContext body }
         gate.withLock {
             val gap = System.currentTimeMillis() - lastRequestAt
             if (gap < 220) kotlinx.coroutines.delay(220 - gap)
             lastRequestAt = System.currentTimeMillis()
-            val req = Request.Builder()
+            val builder = Request.Builder()
                 .url(url)
                 .header("User-Agent", UA)
+            if (cookie.isNotBlank()) builder.header("Cookie", cookie)
+            val req = builder
                 .header("Referer", "https://fanqienovel.com/")
                 .header("Accept-Language", "zh-CN,zh;q=0.9")
                 .header("Accept", "application/json, text/html;q=0.9,*/*;q=0.8")
@@ -75,7 +82,7 @@ class FanqieApi(private val context: Context) {
                 if (body.startsWith("<") && !body.contains("__INITIAL_STATE__") && url.contains("/api/")) {
                     throw ApiException("接口返回了验证页，请稍后再试")
                 }
-                if (cacheable) cache[url] = System.currentTimeMillis() to body
+                if (cacheable) cache[key] = System.currentTimeMillis() to body
                 body
             }
         }

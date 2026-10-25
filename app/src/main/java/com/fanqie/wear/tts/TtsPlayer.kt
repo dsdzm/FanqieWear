@@ -36,6 +36,7 @@ class TtsPlayer(private val context: Context) {
     private var tts: TextToSpeech? = null
     private var initDone = false
     private var zhAvailable = true
+    private var preferredEngine: String? = null
 
     init {
         initEngine()
@@ -43,8 +44,9 @@ class TtsPlayer(private val context: Context) {
 
     val engineReady: Boolean get() = initDone && zhAvailable
 
-    /** 用户刚去商店装了引擎 / 下载了语音包后调用，重新初始化 */
-    fun refresh() {
+    /** 用户刚装完引擎 / 下载了语音包后调用，重新初始化；可指定引擎包名 */
+    fun refresh(enginePackage: String? = null) {
+        if (enginePackage != null) preferredEngine = enginePackage
         runCatching { tts?.shutdown() }
         initDone = false
         zhAvailable = true
@@ -52,14 +54,14 @@ class TtsPlayer(private val context: Context) {
         initEngine()
     }
 
-    private fun initEngine() {
-        tts = TextToSpeech(context.applicationContext) { status ->
+    private val onInit = object : TextToSpeech.OnInitListener {
+        override fun onInit(status: Int) {
             initDone = status == TextToSpeech.SUCCESS
             if (!initDone) {
                 _state.value = _state.value.copy(ready = false, error = "语音引擎初始化失败")
-                return@TextToSpeech
+                return
             }
-            val engine = tts ?: return@TextToSpeech
+            val engine = tts ?: return
             val res = engine.setLanguage(Locale.SIMPLIFIED_CHINESE)
             zhAvailable = res != TextToSpeech.LANG_MISSING_DATA && res != TextToSpeech.LANG_NOT_SUPPORTED
             engine.setSpeechRate(_state.value.speed)
@@ -91,6 +93,14 @@ class TtsPlayer(private val context: Context) {
                 }
             })
             _state.value = _state.value.copy(ready = true, error = if (zhAvailable) null else "设备缺少中文语音包")
+        }
+    }
+
+    private fun initEngine() {
+        tts = if (preferredEngine != null) {
+            TextToSpeech(context.applicationContext, onInit, preferredEngine)
+        } else {
+            TextToSpeech(context.applicationContext, onInit)
         }
     }
 

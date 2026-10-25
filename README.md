@@ -2,7 +2,8 @@
 
 一个跑在 **Wear OS / Android 8+ 手表**上的免费小说阅读器，纯 Jetpack Compose + Wear Compose 实现。
 书荒广场支持 **番茄 / 七猫 双源**，含排行榜、搜索、书架、阅读历史、TTS 听书。
-v1.3 在 1.2 的基础上补了 **离线下载**、**滚动/翻页两种阅读方式**、**字色与主题色**、**TTS 引擎安装引导**，
+v1.4 在 1.3 的基础上补了 **番茄账号登录（Cookie）**、**应用内安装语音引擎**，并修了切章不回顶的问题。
+1.3 带来 **离线下载**、**滚动/翻页两种阅读方式**、**字色与主题色**、**TTS 引擎安装引导**，
 界面按 **Wear OS 原生交互** 实现：中心突出缩放列表、表冠吸附滚动、边缘右滑返回、震动反馈。
 字号不再写死，会随屏宽（168dp 基准）自动放大，另有 4 档「界面缩放」和 5 档「安全区」可调。
 
@@ -87,6 +88,21 @@ App 内对这条路径有明确提示，不会静默失败。
 - 双击正文：打开目录
 - 读到页尾自动接下一章（可关），可预加载下一章正文
 
+## 二之一、为什么第 11 章起正文会断（登录 Cookie）
+
+番茄网页端未登录只给每本书前 10 章左右的试读，第 11 章起 `chapterData.content` 只剩约 200 字，
+`isChapterLock=1`。这不是解析 bug，已实测多个接口（网页、`/api/reader/full`、移动端
+`reading/reader/full`）都拿不到完整正文，必须带登录态。
+
+App 的做法：
+
+- 设置 → 网络与书源 → **番茄账号**：粘贴浏览器里的整段 Cookie（`sessionid=...; sid_tt=...`），
+  之后所有 `fanqienovel.com` 请求都会带上它，缓存键也会跟着变
+- 阅读页遇到锁章会显示「未登录，本章只有试读 / 去登录」，登录后返回自动重新拉取本章
+- Cookie 只保存在本机 SharedPreferences，不上传
+
+获取方式：手机上用支持查看 Cookie 的浏览器打开 fanqienovel.com 登录 → 复制 Cookie → 同步到手表粘贴。
+
 ## 二之二、离线下载
 
 书籍详情页 →「下载全本」或「前 50 章」，整本缓存到手表本地（`filesDir/downloads/<bookId>/`），
@@ -124,7 +140,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 4 / versionName 1.3.0
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 5 / versionName 1.4.0
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6（`ScalingLazyColumn` / `rotary`）、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -139,7 +155,9 @@ adb install -r app-debug.apk
 手表 ROM 常常删掉语音引擎，App 不能内置完整的 TTS 引擎，所以设置页「语音听书」提供了安装渠道：
 
 - 显示当前引擎名、是否就绪、缺中文语音包时的原因
-- 「安装语音引擎」→ 跳 Play 商店（Google 文字转语音），失败则跳网页
+- **应用内安装（主路径，不需要商店/WebView）**：一键下载 eSpeak NG 的 APK（约 10MB，开源 GPLv3），
+  用 `PackageInstaller` 会话写入并交给系统确认；没有「安装未知应用」权限时跳本应用的授权页
+- 「商店安装」→ 跳 Play 商店（Google 文字转语音），作为备用
 - 「系统语音设置」→ 跳系统 TTS 设置下载离线语音包
 - 列出常见引擎（Google / 讯飞 / 百度）并标注是否已安装，点一下直接去装
 - 装完点「重新检测」，`TtsPlayer.refresh()` 会重新初始化引擎

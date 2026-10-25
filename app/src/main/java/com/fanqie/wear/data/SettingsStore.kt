@@ -50,6 +50,8 @@ data class AppSettings(
     val showCover: Boolean = true,
     /** 默认书源 0 番茄 1 七猫 */
     val defaultSource: Int = 0,
+    /** 番茄网页登录 Cookie，为空表示未登录 */
+    val cookie: String = "",
 
     /** 听书语速 0.6~1.6 */
     val ttsSpeed: Float = 1.0f,
@@ -95,6 +97,7 @@ class SettingsStore(context: Context) {
         safeArea = sp.getInt("safeArea", 0),
         showCover = sp.getBoolean("showCover", true),
         defaultSource = sp.getInt("defaultSource", 0),
+        cookie = sp.getString("cookie", "").orEmpty(),
         ttsSpeed = sp.getFloat("ttsSpeed", 1.0f),
         ttsPitch = sp.getFloat("ttsPitch", 1.0f),
         ttsAutoNext = sp.getBoolean("ttsAutoNext", true),
@@ -127,6 +130,7 @@ class SettingsStore(context: Context) {
             .putInt("safeArea", n.safeArea)
             .putBoolean("showCover", n.showCover)
             .putInt("defaultSource", n.defaultSource)
+            .putString("cookie", n.cookie)
             .putFloat("ttsSpeed", n.ttsSpeed)
             .putFloat("ttsPitch", n.ttsPitch)
             .putBoolean("ttsAutoNext", n.ttsAutoNext)
