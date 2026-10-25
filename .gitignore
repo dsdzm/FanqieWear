@@ -17,3 +17,9 @@ Thumbs.db
 # 产物
 *.apk
 *.aab
+dist/
+
+# 签名材料：私钥只留在本机，仓库是公开的
+keystore/
+*.jks
+*.keystore

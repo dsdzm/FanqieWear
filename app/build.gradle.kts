@@ -1,9 +1,20 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
+
+// 正式签名用的密码放在 local.properties（不进版本库），仓库里也只放 keystore 的相对路径。
+// 没有 keystore 时自动回退到 debug 签名，保证别人 clone 下来能直接构建。
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val releaseKeyFile = rootProject.file("keystore/shuge-release.jks")
+val hasReleaseKey = releaseKeyFile.exists()
 
 android {
     namespace = "com.fanqie.wear"
@@ -17,11 +28,30 @@ android {
         versionName = "1.5.0"
     }
 
+    signingConfigs {
+        if (hasReleaseKey) {
+            create("release") {
+                storeFile = releaseKeyFile
+                storePassword = keystoreProps.getProperty("SHUGE_STORE_PASSWORD")
+                keyAlias = keystoreProps.getProperty("SHUGE_KEY_ALIAS") ?: "shuge"
+                keyPassword = keystoreProps.getProperty("SHUGE_KEY_PASSWORD")
+                // v1 兼容老 ROM，v2 是 Android 7+ 的主方案，v3 支持密钥轮换
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseKey) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 

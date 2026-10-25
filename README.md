@@ -180,6 +180,19 @@ gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app
 adb install -r app-debug.apk
 ```
 
+### 正式签名
+
+`app/build.gradle.kts` 支持一把独立的 release 密钥，v2 + v3 同时启用：
+
+1. 放好 `keystore/shuge-release.jks`
+2. 在 `local.properties` 里写 `SHUGE_STORE_PASSWORD` / `SHUGE_KEY_ALIAS` / `SHUGE_KEY_PASSWORD`
+
+密钥文件与密码都在 `.gitignore` 里，不会进仓库；没有 keystore 时自动回退到 debug 签名，
+别人 clone 下来照样能构建，只是不能用于发布。
+
+> 换签名后无法覆盖安装旧包（证书不同会报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`），
+> 需要先卸载。卸载会清空本机的书架与进度。
+
 ## 九、离线下载
 
 书籍详情页 →「下载全本」或「前 50 章」，整本缓存到手表本地（`filesDir/downloads/<bookId>/`），
