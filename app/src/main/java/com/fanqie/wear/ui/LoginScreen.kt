@@ -30,6 +30,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.fanqie.wear.R
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material3.ScreenScaffold
@@ -47,7 +48,7 @@ import com.fanqie.wear.ui.theme.rememberDeviceDims
  * 只能从手机复制 Cookie 再粘贴（支持系统剪贴板同步）。
  */
 @Composable
-fun LoginScreen(onBack: () -> Unit) {
+fun LoginScreen(onBack: () -> Unit, onWebLogin: () -> Unit = {}) {
     val dims = rememberDeviceDims()
     val p = LocalPalette.current
     val state = rememberScalingLazyListState()
@@ -89,9 +90,19 @@ fun LoginScreen(onBack: () -> Unit) {
             }
 
             item {
+                NavCard(
+                    title = "用网页登录（推荐）",
+                    subtitle = "官方页面登录，自动取 Cookie",
+                    icon = R.drawable.ic_compass,
+                    tint = p.jade,
+                    onClick = onWebLogin,
+                )
+            }
+
+            item {
                 GlassCard {
                     Column(modifier = Modifier.fillMaxWidth().padding(10.dp)) {
-                        Text("登录步骤", fontSize = dims.label, color = p.muted)
+                        Text("手动粘贴步骤", fontSize = dims.label, color = p.muted)
                         Spacer(Modifier.height(3.dp))
                         Text(
                             text = "1. 手机上打开 fanqienovel.com 并登录\n" +

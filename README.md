@@ -88,6 +88,34 @@ App 内对这条路径有明确提示，不会静默失败。
 - 双击正文：打开目录
 - 读到页尾自动接下一章（可关），可预加载下一章正文
 
+## 二之零、番茄登录接口逆向结论（实测）
+
+登录不是番茄自己的页面，而是字节 **Passport（muye SDK）**，弹窗由 `muye_*.js` 注入，相关接口都在
+`https://fanqienovel.com` 同域下：
+
+| 用途 | 路径 | 说明 |
+| --- | --- | --- |
+| 账号密码登录 | `POST /account_login/`、`/account_login/v2/` | 需 `aid`、密码加密串与签名 |
+| 短信验证码 | `/send_activation_code/v2/` → `/quick_login/v2/` | 发码 + 登录，带滑块/图形验证码 |
+| 扫码登录 | `GET /passport/web/get_qrcode/` → `GET /passport/web/check_qrconnect/?token=` | 轮询状态：未扫/已扫/已确认 |
+| 登录态检查 | `GET /passport/account/info/v2/` | 返回用户信息，同时下发 Cookie |
+| 退出 | `/logout/`、`/passport/web/logout/` | |
+
+实测结果：
+
+- 直接 `GET /passport/web/get_qrcode/?next=...` → `{"error_code":22,"description":"非法应用"}`
+- 带 `aid=1967` → `{"error_code":16,"description":"该应用无权限"}`（aid 不对或缺少签名）
+- `GET /api/reader/full?itemId=...`（页面自己用的正文接口）→ 200 但空 body；POST JSON → 403
+- 首页加载了 `secsdk-lastest.umd.js`、`rc-client-security/captcha`、`byted_acrawler`，
+  请求头 `X-Argus / X-Gorgon / X-Bogus` 由这些脚本在运行时生成，与 aid、URL、时间戳、ttwid 绑定
+
+**结论**：在手表客户端里复刻这套签名既不可维护，也等于绕过平台风控，所以没有这么做。
+App 走两条合规路径：
+
+1. **网页登录（推荐）**：内置一个 WebView 打开官方登录页，用户自己登录，完成后从 `CookieManager`
+   取出 `fanqienovel.com` 的 Cookie 存进设置（没装 WebView 会自动降级）
+2. **粘贴 Cookie**：手机浏览器登录后复制 Cookie，粘到手表的输入框
+
 ## 二之一、为什么第 11 章起正文会断（登录 Cookie）
 
 番茄网页端未登录只给每本书前 10 章左右的试读，第 11 章起 `chapterData.content` 只剩约 200 字，
@@ -140,7 +168,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 5 / versionName 1.4.0
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 6 / versionName 1.4.1
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6（`ScalingLazyColumn` / `rotary`）、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 

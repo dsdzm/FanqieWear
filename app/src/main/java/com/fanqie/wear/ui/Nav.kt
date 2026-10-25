@@ -34,6 +34,7 @@ sealed interface Dest {
     data object History : Dest
     data object Profile : Dest
     data object Login : Dest
+    data object WebLogin : Dest
     data class Detail(val bookId: String, val title: String, val source: Source) : Dest
     data class Chapters(val bookId: String, val title: String, val source: Source) : Dest
     data class Reader(val bookId: String, val itemId: String, val title: String, val source: Source) : Dest
@@ -124,7 +125,15 @@ fun FanqieWearApp() {
                             onLogin = { push(Dest.Login) },
                         )
 
-                        is Dest.Login -> LoginScreen(onBack = { pop() })
+                        is Dest.Login -> LoginScreen(
+                            onBack = { pop() },
+                            onWebLogin = { push(Dest.WebLogin) },
+                        )
+
+                        is Dest.WebLogin -> WebLoginScreen(
+                            onBack = { pop() },
+                            onUsePaste = { stack = stack.dropLast(1) },
+                        )
 
                         is Dest.Shelf -> ShelfScreen(
                             onBack = { pop() },
