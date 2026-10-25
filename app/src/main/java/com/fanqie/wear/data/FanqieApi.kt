@@ -49,8 +49,16 @@ class FanqieApi(
 
     // ---------------- 网络 ----------------
 
-    private suspend fun raw(url: String, cacheable: Boolean = true): String = withContext(Dispatchers.IO) {
-        val cookie = cookieProvider()
+    /**
+     * @param cookieOverride 传了就用它，不传走设置里的 Cookie。
+     *        登录自检需要"拿一段还没保存的 cookie 去试"，所以留了这个口子。
+     */
+    private suspend fun raw(
+        url: String,
+        cacheable: Boolean = true,
+        cookieOverride: String? = null,
+    ): String = withContext(Dispatchers.IO) {
+        val cookie = cookieOverride ?: cookieProvider()
         val key = if (cookie.isBlank()) url else "$url#${cookie.hashCode()}"
         cache[key]?.let { (at, body) -> if (System.currentTimeMillis() - at < 120_000) return@withContext body }
         gate.withLock {
@@ -88,8 +96,8 @@ class FanqieApi(
         }
     }
 
-    private suspend fun getJson(url: String): JsonElement {
-        val text = raw(url)
+    private suspend fun getJson(url: String, cookieOverride: String? = null): JsonElement {
+        val text = raw(url, cookieOverride = cookieOverride)
         return runCatching { json.parseToJsonElement(text) }
             .getOrElse { throw ApiException("数据格式异常") }
     }
@@ -222,7 +230,13 @@ class FanqieApi(
             source = Source.FANQIE,
         )
         val count = page.str("chapterTotal").toIntOrNull() ?: 0
-        return BookDetail(book, count, page.str("firstChapterItemId").ifBlank { null })
+        // 详情页早先给 firstChapterItemId，现在这个字段没了；
+        // itemIds 是倒序（最新章节在最前），最后一个才是第 1 章
+        val firstFromList = (page["itemIds"] as? JsonArray)?.lastOrNull()
+            ?.let { (it as? JsonPrimitive)?.content }
+            ?.takeIf { it.isNotBlank() }
+        val first = page.str("firstChapterItemId").ifBlank { firstFromList }
+        return BookDetail(book, count, first)
     }
 
     suspend fun directory(bookId: String): List<Chapter> {
@@ -253,7 +267,9 @@ class FanqieApi(
         val state = initialJson(html) ?: throw ApiException("正文解析失败")
         val ch = state["reader"]?.jsonObject?.get("chapterData")?.jsonObject
             ?: throw ApiException("章节不存在或不可见")
-        val locked = ch.str("isChapterLock") == "1" || ch.str("needPay") == "1"
+        // isChapterLock / needPay 在页面里是 JSON 布尔（true/false），早期版本才是 1/0，
+        // 两种都得认，否则锁章会被当成"正常章节"，界面上什么都不提示
+        val locked = ch.str("isChapterLock").isTruthy() || ch.str("needPay").isTruthy()
         val rawContent = ch.str("content")
         val text = FontDecoder.decode(htmlToText(rawContent)) // 正文同样是字体加密，需要还原
         return ChapterContent(
@@ -267,7 +283,62 @@ class FanqieApi(
         )
     }
 
+    // ---------------- 登录自检 ----------------
+
+    /**
+     * 判断一段 Cookie 到底有没有被番茄认可。
+     *
+     * 番茄不会回"登录无效"：Cookie 不对就直接当匿名处理，正文照旧只给前 10 章。
+     * 所以只能拿一本固定书的第 11 章当探针 —— 登录生效时这一章有上千字，
+     * 没生效就恒定在 200 字左右。这样至少能区分"cookie 没生效"和"这章本来就要付费"。
+     */
+    suspend fun probe(cookie: String): LoginProbe {
+        if (cookie.isBlank()) return LoginProbe(false, false, 0, "没有填写 Cookie")
+        // 探针书可能下架，失败了就从推荐流临时取一本，保证自检不会因为一本书失效
+        val chapterId = runCatching { eleventhChapterId(cookie, PROBE_BOOK_ID) }.getOrNull()
+            ?: runCatching { eleventhChapterId(cookie, recommendBookId(cookie)) }.getOrNull()
+            ?: return LoginProbe(true, false, 0, "取不到探针章节，可能网络异常")
+        val html = runCatching {
+            raw("https://fanqienovel.com/reader/$chapterId", cacheable = false, cookieOverride = cookie)
+        }.getOrElse {
+            return LoginProbe(true, false, 0, it.message ?: "探针请求失败")
+        }
+        val ch = initialJson(html)?.get("reader")?.jsonObject?.get("chapterData")?.jsonObject
+            ?: return LoginProbe(true, false, 0, "探针章节解析失败")
+        val chars = ch.str("content").length
+        val locked = ch.str("isChapterLock").isTruthy() || ch.str("needPay").isTruthy()
+        return LoginProbe(
+            hasCookie = true,
+            effective = chars > 800 && !locked,
+            chars = chars,
+            message = "",
+        )
+    }
+
+    /** 探针书的第 11 章：itemIds 倒序，倒数第 11 个才是第 11 章 */
+    private suspend fun eleventhChapterId(cookie: String, bookId: String): String? {
+        val html = raw("https://fanqienovel.com/page/$bookId", cacheable = false, cookieOverride = cookie)
+        val page = initialJson(html)?.get("page")?.jsonObject ?: return null
+        val ids = page["itemIds"] as? JsonArray ?: return null
+        if (ids.size < 11) return null
+        return (ids[ids.size - 11] as? JsonPrimitive)?.content
+    }
+
+    /** 推荐流第一本的书号，仅用于探针兜底 */
+    private suspend fun recommendBookId(cookie: String): String {
+        val root = getJson(
+            "https://fanqienovel.com/api/rank/recommend/list?type=2&limit=3&offset=0",
+            cookie,
+        ).jsonObject
+        val list = root["data"]?.jsonObject?.get("list")?.jsonArray ?: throw ApiException("推荐流为空")
+        val id = (list.firstOrNull() as? JsonObject)?.str("bookId").orEmpty()
+        if (id.isBlank()) throw ApiException("推荐流没有书号")
+        return id
+    }
+
     // ---------------- 杂项 ----------------
+
+    private fun String.isTruthy(): Boolean = this == "1" || equals("true", ignoreCase = true)
 
     private fun JsonElement.asBook(rankStyle: Boolean = false): Book? {
         val o = this as? JsonObject ?: return null
@@ -348,5 +419,31 @@ class FanqieApi(
     companion object {
         private const val UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36"
+
+        /** 自检用的探针书，章节多、长期在架 */
+        private const val PROBE_BOOK_ID = "7069948840148732967"
+
+        /**
+         * Cookie 里有没有真正的登录票据。
+         *
+         * 注意不能拿 passport_csrf_token 当判据 —— 匿名访问首页也会下发，
+         * 之前就是因为把它算作"已登录"，用户以为登上了，实际还是试读。
+         */
+        fun looksLoggedIn(cookie: String): Boolean =
+            Regex("(^|;)\\s*(sessionid|sessionid_ss|sid_guard|sid_tt)\\s*=").containsMatchIn(cookie)
     }
 }
+
+/**
+ * 登录自检结果。
+ * [effective] 才是"服务端认不认这个登录"的唯一可靠信号，光看 cookie 非空没用。
+ */
+data class LoginProbe(
+    val hasCookie: Boolean,
+    /** 服务端是否真的按登录态返回正文 */
+    val effective: Boolean,
+    /** 探针章节的字数：生效时上千，没生效恒定 200 左右 */
+    val chars: Int,
+    /** 失败原因，成功时为空 */
+    val message: String,
+)

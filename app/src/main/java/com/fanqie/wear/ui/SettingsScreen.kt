@@ -47,6 +47,7 @@ import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.TimeText
 import com.fanqie.wear.R
 import com.fanqie.wear.app
+import com.fanqie.wear.data.FanqieApi
 import com.fanqie.wear.data.Source
 import com.fanqie.wear.tts.EspeakEngine
 import com.fanqie.wear.ui.theme.AccentPacks
@@ -403,7 +404,11 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                         item {
                             NavCard(
                                 title = "番茄账号",
-                                subtitle = if (s.cookie.isBlank()) "未登录 · 第 11 章起只有试读" else "已登录 · 可读完整章节",
+                                subtitle = when {
+                                    s.cookie.isBlank() -> "未登录 · 第 11 章起只有试读"
+                                    !FanqieApi.looksLoggedIn(s.cookie) -> "Cookie 缺登录票据 · 点进去重登"
+                                    else -> "已保存 Cookie · 点进去验证是否生效"
+                                },
                                 icon = R.drawable.ic_person,
                                 tint = if (s.cookie.isBlank()) p.accent else p.jade,
                                 onClick = onLogin,

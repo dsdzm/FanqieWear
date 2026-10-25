@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,7 +29,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.wear.compose.material3.Text
+import kotlinx.coroutines.launch
 import com.fanqie.wear.app
+import com.fanqie.wear.data.FanqieApi
+import com.fanqie.wear.data.LoginProbe
 import com.fanqie.wear.ui.theme.LocalPalette
 import com.fanqie.wear.ui.theme.rememberDeviceDims
 
@@ -46,6 +50,9 @@ fun WebLoginScreen(onBack: () -> Unit, onUsePaste: () -> Unit) {
     val p = LocalPalette.current
     val context = LocalContext.current
     var message by remember { mutableStateOf("") }
+    var verifying by remember { mutableStateOf(false) }
+    var probe by remember { mutableStateOf<LoginProbe?>(null) }
+    val scope = rememberCoroutineScope()
 
     val webView: WebView? = remember {
         runCatching {
@@ -74,14 +81,23 @@ fun WebLoginScreen(onBack: () -> Unit, onUsePaste: () -> Unit) {
             message = "还没拿到 Cookie，请先在页面里完成登录"
             return false
         }
-        val hasSession = listOf("sessionid", "sid_tt", "sid_guard", "passport_csrf_token")
-            .any { cookie.contains(it) }
-        if (!hasSession) {
-            message = "Cookie 里没有登录态，请确认已登录成功"
+        // 只认真正的登录票据；passport_csrf_token 匿名访问首页就会下发，当成登录态会误判
+        if (!FanqieApi.looksLoggedIn(cookie)) {
+            message = "没有登录票据（缺 sessionid），页面里可能还没登录成功"
             return false
         }
         app.settings.update { it.copy(cookie = cookie) }
-        message = "已保存登录态，返回阅读页会自动重读"
+        message = "已保存，正在用第 11 章验证…"
+        verifying = true
+        scope.launch {
+            probe = runCatching { app.sources.probeFanqie(cookie) }.getOrNull()
+            verifying = false
+            message = when {
+                probe?.effective == true -> "登录已生效：第 11 章读到 ${probe?.chars} 字"
+                probe != null -> "已保存，但服务端仍按未登录处理（第 11 章 ${probe?.chars} 字）"
+                else -> "已保存，但验证失败，请稍后到「番茄账号」页重试"
+            }
+        }
         return true
     }
 
@@ -104,7 +120,12 @@ fun WebLoginScreen(onBack: () -> Unit, onUsePaste: () -> Unit) {
                 color = p.text,
                 modifier = Modifier.weight(1f),
             )
-            Pill(text = "保存登录", selected = true, compact = true, onClick = { saveCookie() })
+            Pill(
+                text = if (verifying) "验证中…" else "保存登录",
+                selected = true,
+                compact = true,
+                onClick = { saveCookie() },
+            )
         }
 
         if (webView == null) {

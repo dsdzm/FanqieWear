@@ -29,6 +29,12 @@ class SourceRegistry(context: Context, private val settings: SettingsStore) {
 
     /** 用户在设置里选的默认源 */
     fun current(): BookSource = of(Source.of(settings.value.sourceKey))
+
+    /**
+     * 番茄登录自检：拿一段 Cookie 去试读探针章节。
+     * 番茄对无效 Cookie 是静默降级的，只有实测正文长度才知道登录到底生不生效。
+     */
+    suspend fun probeFanqie(cookie: String): LoginProbe = fanqieApi.probe(cookie)
 }
 
 // ---------------- 笔趣阁：默认源，免登录、正文完整 ----------------

@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.wear.compose.material3.Text
 import com.fanqie.wear.app
+import com.fanqie.wear.data.FanqieApi
 import com.fanqie.wear.data.Progress
 import com.fanqie.wear.data.Source
 import com.fanqie.wear.ui.theme.LocalDisplayConfig
@@ -355,7 +356,11 @@ fun ReaderScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = if (settings.cookie.isBlank()) "未登录，本章只有试读" else "登录态失效或无权限",
+                    text = when {
+                        settings.cookie.isBlank() -> "未登录，本章只有试读"
+                        !FanqieApi.looksLoggedIn(settings.cookie) -> "Cookie 里没有登录票据，本章仍是试读"
+                        else -> "登录未生效或本章需付费，本章仍是试读"
+                    },
                     fontSize = dims.label,
                     color = LocalPalette.current.accent,
                     maxLines = 1,
