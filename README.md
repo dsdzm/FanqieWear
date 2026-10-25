@@ -13,6 +13,7 @@ v1.5 主要变化：
 - 设置 → 网络与书源：**选中即切换**，每个源标注能力与限制，支持**一键连通性检测**
 - 书架、阅读历史、继续阅读都会记住**这本书来自哪个源**，跨源不会串
 - 番茄源降级为可选备用源，七猫源保留（只到目录）
+- **v1.6**：语音引擎内置，eSpeak NG 与中文数据随 APK 发布，不再让用户下载任何引擎
 
 ## 一、书源一览
 
@@ -170,7 +171,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 7 / versionName 1.5.0
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 8 / versionName 1.6.0
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -199,14 +200,26 @@ adb install -r app-debug.apk
 阅读时优先读本地文件，断网也能看。下载元数据里记了**书源**，离线打开时按原源走。
 下载在应用级协程里跑，切页面不中断，可在「下载与缓存」页看进度、取消、删除。
 
-## 十、TTS 引擎
+## 十、语音引擎：内置，装完就能听
 
-手表 ROM 常常删掉语音引擎，App 不能内置完整的 TTS 引擎，所以设置页「语音听书」提供了安装渠道：
+早期版本让用户去装 eSpeak NG 的 APK 或系统语音包，手表 ROM 一精简就哑了。
+v1.6 起引擎直接编进 APK：
 
-- **应用内安装（主路径）**：一键下载 eSpeak NG 的 APK（约 10MB，开源 GPLv3），
-  用 `PackageInstaller` 会话写入并交给系统确认
-- 「商店安装」→ 跳 Play 商店（Google 文字转语音），作为备用
-- 「系统语音设置」→ 跳系统 TTS 设置下载离线语音包
+| 组成 | 说明 | 体积 |
+|---|---|---|
+| `libespeak-ng.so` | espeak-ng 1.52.0，NDK 交叉编译，arm64-v8a + armeabi-v7a | 705K / 487K |
+| `libespeakng-jni.so` | JNI 桥，`espeak_Synth` 收 PCM 交给 AudioTrack | 8K |
+| `assets/espeak-ng-data/` | 中文语音数据，从 19MB 裁到只留 cmn + 音素表 + 音色 | 2.6MB |
+
+关键实现：
+
+- `EspeakEngine` 首次使用时把 assets 里的数据解到 `filesDir/tts/`，用版本号文件避免每次启动重解
+- 合成走 `AUDIO_OUTPUT_SYNCHRONOUS`，回调里攒 PCM，一次返回一句，播放由 App 用 `AudioTrack` 控制
+- 逐句播放，句子边界就是进度点和暂停点；暂停 = 取消协程 + `AudioTrack.stop()` 让阻塞的 write 立刻返回
+- 语速映射到 eSpeak 的 wpm（175 × 倍率，80~450），音调映射到 0~99（50 为基准）
+
+代价是音色偏合成腔（eSpeak 的固有水平），好处是**完全离线、零安装、不依赖系统语音包**。
+设置 → 语音听书 里能看到引擎版本与就绪状态，语速音调即时生效。
 
 ## 十一、已知限制
 
@@ -216,7 +229,7 @@ adb install -r app-debug.apk
 3. **七猫没有正文**：只能浏览详情与目录。
 4. **字体映射会过期**（番茄源）：番茄更换字体文件后书名会乱码，需重跑 `tools/gen_fontmap.py`。
 5. **书架按书号去重**：不同源的书号偶有重复，同时收藏两本同书号的会互相覆盖（极少见）。
-6. **听书音色取决于手表**：用系统 TTS，没装中文语音包时会提示去系统设置安装。
+6. **听书音色偏机械**：内置引擎是 eSpeak NG，吐字清楚但没有真人感；换神经网络引擎会让 APK 涨到 50MB 以上。
 7. 书架和进度只存在本地，不涉及账号体系。
 
 ## 十二、免责声明

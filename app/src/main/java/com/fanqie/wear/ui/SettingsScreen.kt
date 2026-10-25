@@ -48,8 +48,7 @@ import androidx.wear.compose.material3.TimeText
 import com.fanqie.wear.R
 import com.fanqie.wear.app
 import com.fanqie.wear.data.Source
-import com.fanqie.wear.tts.TtsEngines
-import com.fanqie.wear.tts.TtsInstaller
+import com.fanqie.wear.tts.EspeakEngine
 import com.fanqie.wear.ui.theme.AccentPacks
 import com.fanqie.wear.ui.theme.LocalPalette
 import com.fanqie.wear.ui.theme.SafeArea
@@ -272,10 +271,11 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                                     val t = app.tts
                                     val st = app.settings.value
                                     t.load(
-                                        "demo", "demo", "番茄阅读",
-                                        "你好，这是番茄阅读的听书测试。可以听到说明语音引擎正常。",
+                                        "demo", "demo", "书阁",
+                                        "你好，这是内置语音引擎的试听。能听到这句话，说明离线朗读正常。",
                                     )
                                     t.setSpeed(st.ttsSpeed)
+                                    t.setPitch(st.ttsPitch)
                                     t.play()
                                 })
                             }
@@ -283,7 +283,7 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                     }
                     item {
                         Text(
-                            text = "使用系统 TTS 朗读，音色取决于手表已装的中文语音包。",
+                            text = "用内置引擎朗读：不联网、不依赖系统语音包，音色是合成腔但吐字清楚。",
                             fontSize = dims.label,
                             color = p.muted,
                             maxLines = 3,
@@ -761,22 +761,12 @@ private fun AccentCard(selected: Int, onSelect: (Int) -> Unit) {
     }
 }
 
-/** TTS 状态卡：检测引擎、跳商店安装、跳系统语音设置下载离线语音包 */
+/** 语音引擎状态：引擎随 APK 安装，不需要用户下载任何东西 */
 @Composable
 private fun TtsStatusCard() {
     val p = LocalPalette.current
     val dims = rememberDeviceDims()
-    val ctx = LocalContext.current
     val ttsState by app.tts.state.collectAsStateWithLifecycle()
-    var tick by remember { mutableIntStateOf(0) }
-    val installed = remember(tick) { TtsEngines.installedPackages(ctx) }
-    val install by app.ttsInstaller.state.collectAsStateWithLifecycle()
-    var engineName by remember(tick) { mutableStateOf<String?>(null) }
-    LaunchedEffect(tick) {
-        engineName = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            TtsEngines.defaultEngine(ctx)
-        }
-    }
 
     GlassCard {
         Column(
@@ -793,11 +783,7 @@ private fun TtsStatusCard() {
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    text = when {
-                        ttsState.ready -> "语音引擎就绪"
-                        ttsState.error != null -> "语音引擎不可用"
-                        else -> "正在初始化语音引擎"
-                    },
+                    text = if (ttsState.ready) "内置语音引擎就绪" else "语音引擎初始化中",
                     fontSize = dims.titleSmall,
                     color = p.text,
                     maxLines = 1,
@@ -806,146 +792,15 @@ private fun TtsStatusCard() {
             Spacer(Modifier.height(3.dp))
             Text(
                 text = buildString {
-                    append("引擎：").append(engineName ?: "检测中…")
-                    if (ttsState.error != null) append("\n").append(ttsState.error)
+                    append("eSpeak NG ").append(EspeakEngine.version())
+                    append(" · 中文音色\n")
+                    append("引擎和语音数据都打进 APK 了，装完就能听，全程离线，不用再装第三方语音包。")
+                    ttsState.error?.let { append("\n").append(it) }
                 },
                 fontSize = dims.label,
                 color = p.muted,
-                maxLines = 3,
+                maxLines = 6,
             )
-            Spacer(Modifier.height(7.dp))
-            Text(
-                text = "内置引擎 · ${TtsInstaller.ENGINE_NAME}",
-                fontSize = dims.titleSmall,
-                color = p.text,
-                maxLines = 1,
-            )
-            Text(
-                text = TtsInstaller.ENGINE_NOTE,
-                fontSize = dims.label,
-                color = p.muted,
-                maxLines = 3,
-            )
-            Spacer(Modifier.height(5.dp))
-            when (install.phase) {
-                TtsInstaller.Phase.DOWNLOADING -> {
-                    Text(
-                        text = "下载中 ${(install.progress * 100).toInt()}%  ${install.done / 1024 / 1024}MB / ${install.total / 1024 / 1024}MB",
-                        fontSize = dims.label,
-                        color = p.text,
-                        maxLines = 1,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(3.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(p.divider),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth(install.progress)
-                                .height(3.dp)
-                                .background(p.accent),
-                        )
-                    }
-                }
-                TtsInstaller.Phase.INSTALLING -> {
-                    Text(
-                        text = install.message ?: "等待系统确认安装…",
-                        fontSize = dims.label,
-                        color = p.accent,
-                        maxLines = 2,
-                    )
-                }
-                TtsInstaller.Phase.NEED_PERMISSION -> {
-                    Text(
-                        text = "需要先允许「安装未知应用」，授权后回来再点一次",
-                        fontSize = dims.label,
-                        color = p.accent,
-                        maxLines = 2,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Pill(text = "去授权", selected = true, compact = true, onClick = { app.ttsInstaller.openInstallPermission() })
-                }
-                TtsInstaller.Phase.INSTALLED -> {
-                    Text(
-                        text = "已安装（${install.pkg ?: "引擎"}），点「重新检测」生效",
-                        fontSize = dims.label,
-                        color = p.jade,
-                        maxLines = 2,
-                    )
-                }
-                TtsInstaller.Phase.ERROR -> {
-                    Text(
-                        text = install.message ?: "安装失败",
-                        fontSize = dims.label,
-                        color = p.accent,
-                        maxLines = 2,
-                    )
-                }
-                TtsInstaller.Phase.IDLE -> {
-                    Pill(
-                        text = "下载并安装（约 10MB）",
-                        selected = true,
-                        compact = true,
-                        onClick = { app.ttsInstaller.start() },
-                    )
-                }
-            }
-            Spacer(Modifier.height(6.dp))
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(5.dp),
-            ) {
-                if (install.phase == TtsInstaller.Phase.ERROR) {
-                    Pill(text = "重试", compact = true, onClick = { app.ttsInstaller.start() })
-                }
-                Pill(
-                    text = "系统语音设置",
-                    compact = true,
-                    onClick = { TtsEngines.openSettings(ctx) },
-                )
-                Pill(
-                    text = "商店安装",
-                    compact = true,
-                    onClick = { TtsEngines.openStore(ctx, "com.google.android.tts") },
-                )
-                Pill(
-                    text = "重新检测",
-                    compact = true,
-                    onClick = {
-                        app.tts.refresh()
-                        tick++
-                    },
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            TtsEngines.candidates.forEach { c ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { TtsEngines.openStore(ctx, c.pkg) }
-                        .padding(vertical = 2.dp),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(5.dp)
-                            .clip(CircleShape)
-                            .background(if (c.pkg in installed) p.jade else p.divider),
-                    )
-                    Spacer(Modifier.width(5.dp))
-                    Text(
-                        text = if (c.pkg in installed) "${c.label} · 已安装" else c.label,
-                        fontSize = dims.label,
-                        color = if (c.pkg in installed) p.muted else p.text,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
         }
     }
 }

@@ -303,12 +303,12 @@ fun ReaderScreen(
                     .padding(horizontal = dims.sidePadding, vertical = 2.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(LocalPalette.current.accentSoft)
-                    .clickable { onOpenTtsSettings() }
+                    .clickable { app.tts.refresh() }
                     .padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "语音引擎未就绪 · 点此下载安装",
+                    text = "语音引擎初始化失败 · 点此重试",
                     fontSize = dims.label,
                     color = LocalPalette.current.accent,
                     maxLines = 1,
@@ -515,6 +515,7 @@ fun ReaderScreen(
                         } else if (content.isNotBlank()) {
                             app.tts.load(bookId, currentId, title, content)
                             app.tts.setSpeed(settings.ttsSpeed)
+                            app.tts.setPitch(settings.ttsPitch)
                             app.tts.play()
                         }
                     }

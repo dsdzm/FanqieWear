@@ -24,8 +24,20 @@ android {
         applicationId = "com.fanqie.wear"
         minSdk = 26
         targetSdk = 34
-        versionCode = 7
-        versionName = "1.5.0"
+        versionCode = 8
+        versionName = "1.6.0"
+
+        // 手表基本都是这两个 ABI；内置语音引擎的 .so 按 ABI 分别提供
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     signingConfigs {

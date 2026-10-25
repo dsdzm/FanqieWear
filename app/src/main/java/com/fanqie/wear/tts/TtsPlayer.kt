@@ -1,16 +1,28 @@
 package com.fanqie.wear.tts
 
 import android.content.Context
-import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
+import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.util.Locale
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 /**
- * 听书引擎：直接用系统 TTS 朗读正文，不依赖番茄的音频接口。
- * 优点是完全离线可用、不额外耗流量；代价是音色取决于手表自带语音包。
+ * 听书引擎：用内置的 [EspeakEngine] 合成 PCM，再用 AudioTrack 播放。
+ *
+ * 之前的实现依赖系统 TextToSpeech，手表 ROM 一旦删掉语音引擎就哑了，只能引导用户去装 APK。
+ * 现在引擎和数据都在 APK 里，安装即用、完全离线，代价只是音色是合成腔（eSpeak 的一贯水平）。
+ *
+ * 逐句合成播放：一句合成完再播下一句，句子边界正好用来做进度和暂停点。
  */
 class TtsPlayer(private val context: Context) {
 
@@ -23,6 +35,7 @@ class TtsPlayer(private val context: Context) {
         val bookId: String = "",
         val chapterId: String = "",
         val speed: Float = 1.0f,
+        val pitch: Float = 1.0f,
         val error: String? = null,
     ) {
         val current: String get() = sentences.getOrElse(index) { "" }
@@ -33,78 +46,39 @@ class TtsPlayer(private val context: Context) {
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
 
-    private var tts: TextToSpeech? = null
-    private var initDone = false
-    private var zhAvailable = true
-    private var preferredEngine: String? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var job: Job? = null
+
+    @Volatile
+    private var track: AudioTrack? = null
 
     init {
-        initEngine()
+        // 引擎初始化要解压数据，放后台跑，不卡首屏
+        scope.launch {
+            val ok = EspeakEngine.ensureReady(context)
+            _state.value = _state.value.copy(
+                ready = ok,
+                error = if (ok) null else "内置语音引擎初始化失败",
+            )
+        }
     }
 
-    val engineReady: Boolean get() = initDone && zhAvailable
+    val engineReady: Boolean get() = _state.value.ready
 
-    /** 用户刚装完引擎 / 下载了语音包后调用，重新初始化；可指定引擎包名 */
+    /** 引擎异常后手动重来一次；参数保留兼容旧调用 */
     fun refresh(enginePackage: String? = null) {
-        if (enginePackage != null) preferredEngine = enginePackage
-        runCatching { tts?.shutdown() }
-        initDone = false
-        zhAvailable = true
-        _state.value = _state.value.copy(ready = false, error = null, playing = false)
-        initEngine()
-    }
-
-    private val onInit = object : TextToSpeech.OnInitListener {
-        override fun onInit(status: Int) {
-            initDone = status == TextToSpeech.SUCCESS
-            if (!initDone) {
-                _state.value = _state.value.copy(ready = false, error = "语音引擎初始化失败")
-                return
-            }
-            val engine = tts ?: return
-            val res = engine.setLanguage(Locale.SIMPLIFIED_CHINESE)
-            zhAvailable = res != TextToSpeech.LANG_MISSING_DATA && res != TextToSpeech.LANG_NOT_SUPPORTED
-            engine.setSpeechRate(_state.value.speed)
-            engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) {
-                    val i = utteranceId?.substringAfterLast('-')?.toIntOrNull() ?: return
-                    _state.value = _state.value.copy(index = i, playing = true)
-                }
-
-                override fun onDone(utteranceId: String?) {
-                    val s = _state.value
-                    if (!s.playing) return
-                    val next = s.index + 1
-                    if (next < s.sentences.size) {
-                        speak(next)
-                    } else {
-                        _state.value = s.copy(playing = false, index = (s.sentences.size - 1).coerceAtLeast(0))
-                        TtsService.stop(context)
-                    }
-                }
-
-                @Deprecated("Deprecated in Java")
-                override fun onError(utteranceId: String?) {
-                    _state.value = _state.value.copy(playing = false, error = "朗读出错")
-                }
-
-                override fun onError(utteranceId: String?, errorCode: Int) {
-                    _state.value = _state.value.copy(playing = false, error = "朗读出错（$errorCode）")
-                }
-            })
-            _state.value = _state.value.copy(ready = true, error = if (zhAvailable) null else "设备缺少中文语音包")
+        scope.launch {
+            _state.value = _state.value.copy(ready = false, error = null, playing = false)
+            EspeakEngine.release()
+            val ok = EspeakEngine.ensureReady(context)
+            _state.value = _state.value.copy(
+                ready = ok,
+                error = if (ok) null else "内置语音引擎初始化失败",
+            )
         }
     }
 
-    private fun initEngine() {
-        tts = if (preferredEngine != null) {
-            TextToSpeech(context.applicationContext, onInit, preferredEngine)
-        } else {
-            TextToSpeech(context.applicationContext, onInit)
-        }
-    }
-
-    /** 载入一章：切句 + 重置进度。 */
+    /** 载入一章：切句 + 重置进度 */
     fun load(bookId: String, chapterId: String, title: String, text: String) {
         val sentences = splitSentences(text)
         _state.value = State(
@@ -116,6 +90,7 @@ class TtsPlayer(private val context: Context) {
             bookId = bookId,
             chapterId = chapterId,
             speed = _state.value.speed,
+            pitch = _state.value.pitch,
             error = _state.value.error,
         )
     }
@@ -123,62 +98,179 @@ class TtsPlayer(private val context: Context) {
     fun play() {
         val s = _state.value
         if (s.sentences.isEmpty()) return
-        if (!initDone || !zhAvailable) {
-            _state.value = s.copy(error = if (!initDone) "语音引擎未就绪" else "设备缺少中文语音包，请在系统设置中安装")
-            return
-        }
-        _state.value = s.copy(playing = true, error = null)
         TtsService.start(context, s.title)
-        speak(s.index)
+        _state.value = s.copy(playing = true, error = null)
+        job?.cancel()
+        stopTrack()
+        job = scope.launch {
+            if (!EspeakEngine.ensureReady(context)) {
+                _state.value = _state.value.copy(ready = false, playing = false, error = "内置语音引擎初始化失败")
+                TtsService.stop(context)
+                return@launch
+            }
+            _state.value = _state.value.copy(ready = true)
+            playFrom(_state.value.index)
+        }
     }
 
     fun pause() {
+        job?.cancel()
+        job = null
+        stopTrack()
         _state.value = _state.value.copy(playing = false)
-        tts?.stop()
         TtsService.stop(context)
     }
 
     fun next() {
         val s = _state.value
         if (s.sentences.isEmpty()) return
-        val i = (s.index + 1).coerceAtMost(s.sentences.size - 1)
-        _state.value = s.copy(index = i)
-        if (s.playing) speak(i)
+        jumpTo((s.index + 1).coerceAtMost(s.sentences.size - 1))
     }
 
     fun prev() {
         val s = _state.value
         if (s.sentences.isEmpty()) return
-        val i = (s.index - 1).coerceAtLeast(0)
-        _state.value = s.copy(index = i)
-        if (s.playing) speak(i)
+        jumpTo((s.index - 1).coerceAtLeast(0))
     }
 
     fun seekTo(index: Int) {
         val s = _state.value
         if (s.sentences.isEmpty()) return
-        val i = index.coerceIn(0, s.sentences.size - 1)
-        _state.value = s.copy(index = i)
-        if (s.playing) speak(i)
+        jumpTo(index.coerceIn(0, s.sentences.size - 1))
     }
 
     fun setSpeed(speed: Float) {
         _state.value = _state.value.copy(speed = speed)
-        tts?.setSpeechRate(speed)
-        if (_state.value.playing) speak(_state.value.index)
+        if (_state.value.playing) jumpTo(_state.value.index)
+    }
+
+    fun setPitch(pitch: Float) {
+        _state.value = _state.value.copy(pitch = pitch)
+        if (_state.value.playing) jumpTo(_state.value.index)
     }
 
     fun stop() {
+        job?.cancel()
+        job = null
+        stopTrack()
         _state.value = _state.value.copy(playing = false, index = 0)
-        tts?.stop()
         TtsService.stop(context)
     }
 
-    private fun speak(index: Int) {
+    // ---------------- 播放 ----------------
+
+    private fun jumpTo(index: Int) {
         val s = _state.value
-        val text = s.sentences.getOrNull(index) ?: return
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "utt-$index")
+        _state.value = s.copy(index = index)
+        if (!s.playing) return
+        job?.cancel()
+        stopTrack()
+        job = scope.launch {
+            if (!EspeakEngine.ensureReady(context)) return@launch
+            playFrom(index)
+        }
     }
+
+    /** 从第 index 句开始逐句合成播放；被取消时直接返回 */
+    private suspend fun playFrom(start: Int) {
+        var i = start
+        while (currentCoroutineContext().isActive) {
+            val s = _state.value
+            val text = s.sentences.getOrNull(i) ?: break
+            _state.value = s.copy(index = i, playing = true)
+            val pcm = EspeakEngine.synth(text, wpmOf(s.speed), pitchOf(s.pitch))
+            if (pcm == null || pcm.isEmpty()) {
+                i++
+                continue
+            }
+            val finished = playPcm(pcm)
+            if (!finished) return
+            i++
+        }
+        if (currentCoroutineContext().isActive) {
+            _state.value = _state.value.copy(playing = false)
+            TtsService.stop(context)
+        }
+    }
+
+    /**
+     * 写一帧 PCM 到 AudioTrack。返回 false 表示被打断（暂停/切句），调用方应退出循环。
+     * write 是阻塞的，外部 stopTrack() 会让它返回负值。
+     */
+    private suspend fun playPcm(pcm: ShortArray): Boolean {
+        val rate = EspeakEngine.sampleRate
+        val minBuffer = AudioTrack.getMinBufferSize(
+            rate,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+        ).coerceAtLeast(4096)
+        val bufferSize = maxOf(minBuffer, pcm.size * 2)
+
+        val t = runCatching {
+            AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build(),
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(rate)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build(),
+                )
+                .setBufferSizeInBytes(bufferSize)
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .build()
+        }.getOrElse {
+            Log.e("TtsPlayer", "创建 AudioTrack 失败", it)
+            _state.value = _state.value.copy(playing = false, error = "音频输出初始化失败")
+            return false
+        }
+
+        track = t
+        var offset = 0
+        var ok = true
+        try {
+            t.play()
+            while (offset < pcm.size) {
+                if (!currentCoroutineContext().isActive) {
+                    ok = false
+                    break
+                }
+                val written = t.write(pcm, offset, pcm.size - offset, AudioTrack.WRITE_BLOCKING)
+                if (written <= 0) {
+                    // 被打断（pause/stop 会让 write 返回负值）或底层出错，两种情况都退出这一句
+                    ok = false
+                    break
+                }
+                offset += written
+            }
+        } catch (t2: Throwable) {
+            Log.e("TtsPlayer", "播放失败", t2)
+            ok = false
+        } finally {
+            runCatching { t.stop() }
+            runCatching { t.release() }
+            if (track === t) track = null
+        }
+        return ok
+    }
+
+    private fun stopTrack() {
+        val t = track ?: return
+        runCatching { t.pause() }
+        runCatching { t.flush() }
+        runCatching { t.stop() }
+    }
+
+    /** 语速倍率 → eSpeak 的每分钟词数（默认 175） */
+    private fun wpmOf(speed: Float): Int = (175f * speed).toInt().coerceIn(80, 450)
+
+    /** 音调倍率 → eSpeak 的 0~99（50 为默认） */
+    private fun pitchOf(pitch: Float): Int = (50f * pitch).toInt().coerceIn(0, 99)
 
     private fun splitSentences(raw: String): List<String> {
         val cleaned = raw.replace(Regex("[ \\t\\u3000]+"), " ")
