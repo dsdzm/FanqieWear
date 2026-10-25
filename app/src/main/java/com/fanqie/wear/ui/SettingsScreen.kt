@@ -27,6 +27,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,6 +47,7 @@ import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.TimeText
 import com.fanqie.wear.R
 import com.fanqie.wear.app
+import com.fanqie.wear.data.Source
 import com.fanqie.wear.tts.TtsEngines
 import com.fanqie.wear.tts.TtsInstaller
 import com.fanqie.wear.ui.theme.AccentPacks
@@ -53,6 +55,7 @@ import com.fanqie.wear.ui.theme.LocalPalette
 import com.fanqie.wear.ui.theme.SafeArea
 import com.fanqie.wear.ui.theme.UiScale
 import com.fanqie.wear.ui.theme.rememberDeviceDims
+import kotlinx.coroutines.launch
 
 val SETTING_TITLES = listOf(
     "阅读外观", "阅读操作", "界面与安全区", "语音听书",
@@ -64,7 +67,7 @@ private val SETTING_SUBS = listOf(
     "主题、缩放、安全区、封面",
     "语速、音调、自动续播",
     "空间占用、清理",
-    "默认书源、接口状态",
+    "默认书源、连通性检测",
     "震动、边缘返回",
     "版本、免责、重置",
 )
@@ -112,6 +115,10 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
     val s by app.settings.state.collectAsStateWithLifecycle()
     var cacheText by remember { mutableStateOf("") }
     var resetDone by remember { mutableStateOf(false) }
+    // 书源检测的状态放在这里：LazyListScope 的 lambda 不是 @Composable，分支里不能 remember
+    val scope = rememberCoroutineScope()
+    var checking by remember { mutableStateOf(false) }
+    var probeResults by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
 
     ScreenScaffold(
             scrollState = state,
@@ -311,37 +318,106 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                 }
 
                 5 -> {
-                    item {
-                        NavCard(
-                            title = "番茄账号",
-                            subtitle = if (s.cookie.isBlank()) "未登录 · 第 11 章起只有试读" else "已登录 · 可读完整章节",
-                            icon = R.drawable.ic_person,
-                            tint = if (s.cookie.isBlank()) p.accent else p.jade,
-                            onClick = onLogin,
-                        )
-                    }
-                    item {
-                        ChoiceCard("默认书源", listOf("番茄", "七猫"), s.defaultSource) { v ->
-                            app.settings.update { it.copy(defaultSource = v) }
-                        }
-                    }
+                    val current = app.sources.of(Source.of(s.sourceKey))
+
                     item {
                         GlassCard {
                             Column(modifier = Modifier.fillMaxWidth().padding(10.dp)) {
-                                Text("接口状态", fontSize = dims.label, color = p.muted)
-                                Spacer(Modifier.height(3.dp))
-                                StatusLine("番茄 · 榜单/详情/目录/正文", true)
-                                StatusLine("七猫 · 搜索/详情/目录", true)
-                                StatusLine("七猫 · 正文", false)
+                                Text("当前书源", fontSize = dims.label, color = p.muted)
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = current.displayName,
+                                    fontSize = dims.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = p.text,
+                                )
+                                Text(
+                                    text = current.desc,
+                                    fontSize = dims.label,
+                                    color = p.muted,
+                                    maxLines = 2,
+                                )
                             }
                         }
                     }
+
+                    item { SectionLabel("切换书源") }
+
+                    items(app.sources.all.size) { i ->
+                        val src = app.sources.all[i]
+                        val inUse = src.source.key == s.sourceKey
+                        NavCard(
+                            title = src.displayName,
+                            subtitle = src.desc,
+                            icon = R.drawable.ic_compass,
+                            tint = if (inUse) p.jade else p.accent,
+                            trailing = if (inUse) "使用中" else "切换",
+                            onClick = {
+                                if (!inUse) {
+                                    app.settings.update { it.copy(sourceKey = src.source.key) }
+                                    probeResults = emptyMap()
+                                }
+                            },
+                        )
+                    }
+
+                    item {
+                        Pill(
+                            text = if (checking) "检测中…" else "检测书源可用性",
+                            onClick = {
+                                if (!checking) {
+                                    checking = true
+                                    scope.launch {
+                                        val map = linkedMapOf<String, String>()
+                                        app.sources.all.forEach { src ->
+                                            map[src.source.key] =
+                                                runCatching { src.ping() }.getOrElse { it.message ?: "不可用" }
+                                            probeResults = map.toMap()
+                                        }
+                                        checking = false
+                                    }
+                                }
+                            },
+                        )
+                    }
+
+                    if (probeResults.isNotEmpty()) {
+                        item {
+                            GlassCard {
+                                Column(modifier = Modifier.fillMaxWidth().padding(10.dp)) {
+                                    Text("接口状态", fontSize = dims.label, color = p.muted)
+                                    Spacer(Modifier.height(3.dp))
+                                    app.sources.all.forEach { src ->
+                                        val msg = probeResults[src.source.key] ?: "未检测"
+                                        StatusLine(
+                                            "${src.displayName} · $msg",
+                                            msg.contains("正常"),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (s.sourceKey == Source.FANQIE.key) {
+                        item {
+                            NavCard(
+                                title = "番茄账号",
+                                subtitle = if (s.cookie.isBlank()) "未登录 · 第 11 章起只有试读" else "已登录 · 可读完整章节",
+                                icon = R.drawable.ic_person,
+                                tint = if (s.cookie.isBlank()) p.accent else p.jade,
+                                onClick = onLogin,
+                            )
+                        }
+                    }
+
                     item {
                         Text(
-                            text = "七猫正文接口需要 App 端私有签名，暂未打通；在书荒广场选七猫的书会提示切回番茄源。",
+                            text = "番茄的登录走字节 Passport，签名在手表端跑不通，正文第 11 章起只有试读，" +
+                                "所以默认换成免登录的笔趣阁；番茄源保留在这里，以后登录修好了可以随时切回来。",
                             fontSize = dims.label,
                             color = p.muted,
-                            maxLines = 4,
+                            maxLines = 6,
                         )
                     }
                 }
@@ -372,15 +448,15 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                         GlassCard {
                             Column(modifier = Modifier.fillMaxWidth().padding(10.dp)) {
                                 Text(
-                                    "番茄阅读 · 手表版",
+                                    "书阁 · 手表版",
                                     fontSize = dims.titleSmall,
                                     fontWeight = FontWeight.SemiBold,
                                     color = p.text,
                                 )
-                                Text("v1.2.0 · minSdk 26", fontSize = dims.label, color = p.muted)
+                                Text("v1.5.0 · minSdk 26", fontSize = dims.label, color = p.muted)
                                 Spacer(Modifier.height(6.dp))
                                 Text(
-                                    text = "数据来自番茄小说、七猫免费小说的公开接口，仅供个人学习研究。\n" +
+                                    text = "数据来自笔趣阁、番茄小说、七猫免费小说的公开页面，仅供个人学习研究。\n" +
                                         "小说版权归原作者与平台所有，请支持正版。",
                                     fontSize = dims.label,
                                     color = p.muted,

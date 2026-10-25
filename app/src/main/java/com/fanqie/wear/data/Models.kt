@@ -2,7 +2,20 @@ package com.fanqie.wear.data
 
 import java.util.Locale
 
-enum class Source(val key: String) { FANQIE("fanqie"), QIMAO("qimao") }
+/**
+ * 书源。默认值给笔趣阁：它免登录、正文完整，是现在的主用源。
+ * 番茄与七猫保留为可切换的备用源，不再硬编码在页面里。
+ */
+enum class Source(val key: String, val label: String) {
+    BIQUGE("biquge", "笔趣阁"),
+    QIMAO("qimao", "七猫"),
+    FANQIE("fanqie", "番茄"),
+    ;
+
+    companion object {
+        fun of(key: String?): Source = entries.firstOrNull { it.key == key } ?: BIQUGE
+    }
+}
 
 data class Book(
     val id: String,
@@ -17,7 +30,7 @@ data class Book(
     val finished: Boolean = false,
     val lastChapter: String = "",
     val tags: List<String> = emptyList(),
-    val source: Source = Source.FANQIE,
+    val source: Source = Source.BIQUGE,
 )
 
 data class Chapter(

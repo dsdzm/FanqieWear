@@ -30,13 +30,14 @@ import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.TimeText
 import com.fanqie.wear.app
+import com.fanqie.wear.data.Source
 import com.fanqie.wear.ui.theme.LocalPalette
 import com.fanqie.wear.ui.theme.rememberDeviceDims
 
 @Composable
 fun ShelfScreen(
     onBack: () -> Unit,
-    onBook: (String, String) -> Unit,
+    onBook: (String, String, Source) -> Unit,
 ) {
     val dims = rememberDeviceDims()
     val state = rememberScalingLazyListState()
@@ -66,16 +67,20 @@ fun ShelfScreen(
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(16.dp))
                         .background(LocalPalette.current.card)
-                        .clickable { onBook(it.id, it.title) }
+                        .clickable { onBook(it.id, it.title, Source.of(it.source)) }
                         .padding(horizontal = 10.dp, vertical = 9.dp),
                 ) {
-                    Text(
-                        text = it.title,
-                        fontSize = dims.titleSmall,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = it.title,
+                            fontSize = dims.titleSmall,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        MiniTag(Source.of(it.source).label, LocalPalette.current.jade)
+                    }
                     if (it.lastChapterTitle.isNotBlank()) {
                         Text(
                             text = "读到：${it.lastChapterTitle}",

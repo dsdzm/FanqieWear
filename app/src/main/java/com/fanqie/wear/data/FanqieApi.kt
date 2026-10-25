@@ -172,6 +172,7 @@ class FanqieApi(
                 author = FontDecoder.decode(o.str("author")),
                 category = o.str("category"),
                 lastChapter = o.str("title"),
+                source = Source.FANQIE,
             )
         }
     }
@@ -196,6 +197,7 @@ class FanqieApi(
                 category = o.str("category"),
                 score = o.str("score"),
                 finished = o.str("creation_status") == "0",
+                source = Source.FANQIE,
             )
         }
     }
@@ -217,6 +219,7 @@ class FanqieApi(
             wordCount = normalizeWordCount(page.str("wordNumber")),
             finished = page.str("creationStatus") == "0",
             lastChapter = FontDecoder.decode(page.str("lastChapterTitle")),
+            source = Source.FANQIE,
         )
         val count = page.str("chapterTotal").toIntOrNull() ?: 0
         return BookDetail(book, count, page.str("firstChapterItemId").ifBlank { null })
@@ -289,6 +292,7 @@ class FanqieApi(
             score = o.str("score"),
             finished = o.str("creation_status", "creationStatus") == "0",
             lastChapter = FontDecoder.decode(o.str("lastChapterTitle")),
+            source = Source.FANQIE,
         )
     }
 

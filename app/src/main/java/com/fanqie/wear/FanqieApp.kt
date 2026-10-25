@@ -3,11 +3,10 @@ package com.fanqie.wear
 import android.app.Application
 import com.fanqie.wear.data.DownloadManager
 import com.fanqie.wear.data.DownloadStore
-import com.fanqie.wear.data.FanqieApi
 import com.fanqie.wear.data.FontDecoder
-import com.fanqie.wear.data.QimaoApi
 import com.fanqie.wear.data.SettingsStore
 import com.fanqie.wear.data.ShelfStore
+import com.fanqie.wear.data.SourceRegistry
 import com.fanqie.wear.tts.FanqieTtsBridge
 import com.fanqie.wear.tts.TtsInstaller
 import com.fanqie.wear.tts.TtsPlayer
@@ -17,9 +16,8 @@ import kotlinx.coroutines.SupervisorJob
 
 class FanqieApp : Application() {
 
-    lateinit var api: FanqieApi
-        private set
-    lateinit var qimao: QimaoApi
+    /** 书源注册表：页面统一从这里取当前书源，不再直接依赖某个站点 */
+    lateinit var sources: SourceRegistry
         private set
     lateinit var shelf: ShelfStore
         private set
@@ -42,12 +40,11 @@ class FanqieApp : Application() {
         instance = this
         FontDecoder.load(this)
         settings = SettingsStore(this)
-        api = FanqieApi(this) { settings.value.cookie }
-        qimao = QimaoApi(this)
+        sources = SourceRegistry(this, settings)
         shelf = ShelfStore(this)
         tts = TtsPlayer(this)
         downloads = DownloadStore(this)
-        downloader = DownloadManager(api, downloads, scope)
+        downloader = DownloadManager(sources, downloads, scope)
         ttsInstaller = TtsInstaller(this, scope) { pkg -> tts.refresh(pkg) }
         FanqieTtsBridge.installer = ttsInstaller
     }

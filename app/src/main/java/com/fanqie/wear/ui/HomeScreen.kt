@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,8 +29,10 @@ import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.TimeText
 import coil.compose.AsyncImage
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fanqie.wear.R
 import com.fanqie.wear.app
+import com.fanqie.wear.data.Source
 import com.fanqie.wear.ui.theme.LocalPalette
 import com.fanqie.wear.ui.theme.rememberDeviceDims
 
@@ -43,13 +46,15 @@ fun HomeScreen(
     onDownload: () -> Unit,
     onSettings: () -> Unit,
     onProfile: () -> Unit,
-    onContinue: (String, String, String) -> Unit,
+    onContinue: (String, String, String, Source) -> Unit,
 ) {
     val dims = rememberDeviceDims()
     val p = LocalPalette.current
     val state = rememberScalingLazyListState()
     val items = remember { app.shelf.all() }
     val last = items.firstOrNull()?.takeIf { !it.lastChapterId.isNullOrBlank() }
+    val settings by app.settings.state.collectAsStateWithLifecycle()
+    val sourceLabel = Source.of(settings.sourceKey).label
 
     ScreenScaffold(
             scrollState = state,
@@ -64,16 +69,20 @@ fun HomeScreen(
             item {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        text = "番茄阅读",
+                        text = "书阁",
                         fontSize = dims.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = p.text,
                     )
                     Text(
-                        text = if (items.isEmpty()) "书架还是空的，去排行榜逛逛"
-                        else "书架 ${items.size} 本 · 已读 ${items.count { !it.lastChapterId.isNullOrBlank() }} 本",
+                        text = buildString {
+                            append("书源 ").append(sourceLabel)
+                            append(if (items.isEmpty()) " · 书架还空着" else " · 书架 ${items.size} 本")
+                        },
                         fontSize = dims.label,
                         color = p.muted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
@@ -85,7 +94,7 @@ fun HomeScreen(
                         title = last.title,
                         chapter = last.lastChapterTitle,
                         progress = ((last.chapterIndex + 1).coerceAtLeast(1) / 40f).coerceIn(0.05f, 1f),
-                        onClick = { onContinue(last.id, last.lastChapterId!!, last.title) },
+                        onClick = { onContinue(last.id, last.lastChapterId!!, last.title, Source.of(last.source)) },
                     )
                 }
             }
@@ -93,8 +102,8 @@ fun HomeScreen(
             item { SectionLabel("发现") }
             item {
                 NavCard(
-                    title = "排行榜",
-                    subtitle = "男频 · 女频 · 阅读榜",
+                    title = "分类书库",
+                    subtitle = "按题材翻书 · 可加载更多",
                     icon = R.drawable.ic_rank,
                     tint = p.accent,
                     onClick = onRank,
@@ -103,7 +112,7 @@ fun HomeScreen(
             item {
                 NavCard(
                     title = "书荒广场",
-                    subtitle = "番茄 / 七猫 双源",
+                    subtitle = "按书源随机推荐",
                     icon = R.drawable.ic_compass,
                     tint = p.jade,
                     onClick = onExplore,

@@ -56,12 +56,8 @@ fun ChapterListScreen(
     LaunchedEffect(bookId, source, reload) {
         loading = true
         error = null
-        runCatching {
-            when (source) {
-                Source.FANQIE -> app.api.directory(bookId)
-                Source.QIMAO -> app.qimao.catalog(bookId)
-            }
-        }.onSuccess { chapters = it }
+        runCatching { app.sources.of(source).catalog(bookId) }
+            .onSuccess { chapters = it }
             .onFailure { error = it.message ?: "目录加载失败" }
         loading = false
     }

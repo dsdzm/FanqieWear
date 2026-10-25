@@ -48,8 +48,8 @@ data class AppSettings(
     val safeArea: Int = 0,
     /** 列表里显示封面 */
     val showCover: Boolean = true,
-    /** 默认书源 0 番茄 1 七猫 */
-    val defaultSource: Int = 0,
+    /** 默认书源，存 Source.key，默认笔趣阁（免登录） */
+    val sourceKey: String = Source.BIQUGE.key,
     /** 番茄网页登录 Cookie，为空表示未登录 */
     val cookie: String = "",
 
@@ -96,7 +96,7 @@ class SettingsStore(context: Context) {
         uiScale = sp.getInt("uiScale", 0),
         safeArea = sp.getInt("safeArea", 0),
         showCover = sp.getBoolean("showCover", true),
-        defaultSource = sp.getInt("defaultSource", 0),
+        sourceKey = sp.getString("sourceKey", Source.BIQUGE.key) ?: Source.BIQUGE.key,
         cookie = sp.getString("cookie", "").orEmpty(),
         ttsSpeed = sp.getFloat("ttsSpeed", 1.0f),
         ttsPitch = sp.getFloat("ttsPitch", 1.0f),
@@ -129,7 +129,7 @@ class SettingsStore(context: Context) {
             .putInt("uiScale", n.uiScale)
             .putInt("safeArea", n.safeArea)
             .putBoolean("showCover", n.showCover)
-            .putInt("defaultSource", n.defaultSource)
+            .putString("sourceKey", n.sourceKey)
             .putString("cookie", n.cookie)
             .putFloat("ttsSpeed", n.ttsSpeed)
             .putFloat("ttsPitch", n.ttsPitch)

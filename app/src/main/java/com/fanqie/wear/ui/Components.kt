@@ -37,8 +37,8 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Text
 import coil.compose.AsyncImage
+import com.fanqie.wear.app
 import com.fanqie.wear.data.Book
-import com.fanqie.wear.data.Source
 import com.fanqie.wear.ui.theme.DeviceDims
 import com.fanqie.wear.ui.theme.LocalDisplayConfig
 import com.fanqie.wear.ui.theme.LocalPalette
@@ -300,7 +300,10 @@ fun BookCard(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = Modifier.padding(top = 3.dp),
                 ) {
-                    if (book.source == Source.QIMAO) MiniTag("七猫", p.jade)
+                    // 只在"不是当前默认源"时贴个来源标签，单一来源时列表更干净
+                    if (book.source.key != app.settings.value.sourceKey) {
+                        MiniTag(book.source.label, sourceTint(book.source))
+                    }
                     if (book.category.isNotBlank()) MiniTag(book.category.take(4), p.accent.copy(alpha = 0.75f))
                     if (book.score.isNotBlank()) {
                         Text("★${book.score}", fontSize = dims.label, color = p.accent, maxLines = 1)

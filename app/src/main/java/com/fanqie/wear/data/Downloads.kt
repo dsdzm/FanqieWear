@@ -31,6 +31,8 @@ data class DownloadedBook(
     val firstChapterId: String?,
     val updatedAt: Long,
     val bytes: Long,
+    /** 下载时用的书源，离线打开时按它走 */
+    val source: String = Source.BIQUGE.key,
 ) {
     val progress: Float get() = if (total <= 0) 0f else (done.toFloat() / total).coerceIn(0f, 1f)
     val sizeText: String
@@ -75,7 +77,14 @@ class DownloadStore(context: Context) {
         }.getOrNull()
     }
 
-    fun writeMeta(bookId: String, title: String, cover: String?, total: Int, firstChapterId: String?) {
+    fun writeMeta(
+        bookId: String,
+        title: String,
+        cover: String?,
+        total: Int,
+        firstChapterId: String?,
+        source: Source,
+    ) {
         val d = dir(bookId).apply { mkdirs() }
         val meta = JSONObject()
             .put("bookId", bookId)
@@ -83,6 +92,7 @@ class DownloadStore(context: Context) {
             .put("cover", cover ?: "")
             .put("total", total)
             .put("first", firstChapterId ?: "")
+            .put("source", source.key)
             .put("updatedAt", System.currentTimeMillis())
         File(d, "meta.json").writeText(meta.toString())
     }
@@ -103,6 +113,7 @@ class DownloadStore(context: Context) {
                 firstChapterId = meta?.optString("first").orEmpty().ifBlank { null },
                 updatedAt = meta?.optLong("updatedAt") ?: d.lastModified(),
                 bytes = d.walkTopDown().filter { it.isFile }.sumOf { it.length() },
+                source = meta?.optString("source").orEmpty().ifBlank { Source.BIQUGE.key },
             )
         }?.sortedByDescending { it.updatedAt }.orEmpty()
     }
@@ -132,9 +143,12 @@ data class DownloadTask(
 /**
  * 下载队列：串行跑（接口有频率限制），进度走 StateFlow，
  * 页面切走也继续下，返回来还能看到进度。
+ *
+ * 按书源下载：目录与正文都从 [SourceRegistry] 里取，
+ * 所以七猫那种没有正文的源会在开始时就报错，而不是下到一半全空。
  */
 class DownloadManager(
-    private val api: FanqieApi,
+    private val sources: SourceRegistry,
     private val store: DownloadStore,
     private val scope: CoroutineScope,
 ) {
@@ -145,24 +159,27 @@ class DownloadManager(
 
     fun isDownloaded(bookId: String): Boolean = store.list().any { it.bookId == bookId }
 
-    fun start(bookId: String, title: String, cover: String?, limit: Int = 0) {
+    fun start(bookId: String, title: String, cover: String?, source: Source, limit: Int = 0) {
         if (jobs[bookId]?.isActive == true) return
         _tasks.value = _tasks.value + (bookId to DownloadTask(bookId, title))
         jobs[bookId] = scope.launch {
             runCatching {
-                val chapters = api.directory(bookId)
+                val api = sources.of(source)
+                if (!api.capability.chapter) throw ApiException("${api.displayName} 暂不支持下载正文")
+                val chapters = api.catalog(bookId)
+                if (chapters.isEmpty()) throw ApiException("目录为空，无法下载")
                 val targets = if (limit > 0) chapters.take(limit) else chapters
                 var done = 0
                 for (ch in targets) {
                     if (!store.has(bookId, ch.itemId)) {
-                        val c = api.chapter(ch.itemId)
+                        val c = api.chapter(bookId, ch.itemId)
                         store.saveChapter(bookId, c)
                         delay(150)
                     }
                     done++
                     _tasks.value = _tasks.value + (bookId to DownloadTask(bookId, title, targets.size, done, true))
                 }
-                store.writeMeta(bookId, title, cover, targets.size, targets.firstOrNull()?.itemId)
+                store.writeMeta(bookId, title, cover, targets.size, targets.firstOrNull()?.itemId, source)
                 _tasks.value = _tasks.value + (bookId to DownloadTask(bookId, title, targets.size, done, false))
             }.onFailure { e ->
                 _tasks.value = _tasks.value + (

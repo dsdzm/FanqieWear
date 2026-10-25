@@ -53,7 +53,7 @@ fun FanqieWearApp() {
                 if (last != null) {
                     listOf<Dest>(
                         Dest.Home,
-                        Dest.Reader(last.id, last.lastChapterId!!, last.title, Source.FANQIE),
+                        Dest.Reader(last.id, last.lastChapterId!!, last.title, Source.of(last.source)),
                     )
                 } else {
                     listOf(Dest.Home)
@@ -98,8 +98,8 @@ fun FanqieWearApp() {
                             onDownload = { push(Dest.Download) },
                             onSettings = { push(Dest.Settings) },
                             onProfile = { push(Dest.Profile) },
-                            onContinue = { bookId, itemId, title ->
-                                push(Dest.Reader(bookId, itemId, title, Source.FANQIE))
+                            onContinue = { bookId, itemId, title, source ->
+                                push(Dest.Reader(bookId, itemId, title, source))
                             },
                         )
 
@@ -137,7 +137,7 @@ fun FanqieWearApp() {
 
                         is Dest.Shelf -> ShelfScreen(
                             onBack = { pop() },
-                            onBook = { id, title -> push(Dest.Detail(id, title, Source.FANQIE)) },
+                            onBook = { id, title, source -> push(Dest.Detail(id, title, source)) },
                         )
 
                         is Dest.Search -> SearchScreen(
@@ -149,8 +149,8 @@ fun FanqieWearApp() {
 
                         is Dest.History -> HistoryScreen(
                             onBack = { pop() },
-                            onOpen = { bookId, itemId, title ->
-                                push(Dest.Reader(bookId, itemId, title, Source.FANQIE))
+                            onOpen = { bookId, itemId, title, source ->
+                                push(Dest.Reader(bookId, itemId, title, source))
                             },
                         )
 

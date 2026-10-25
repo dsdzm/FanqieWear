@@ -15,6 +15,8 @@ data class ShelfItem(
     val lastChapterTitle: String = "",
     val chapterIndex: Int = 0,
     val updatedAt: Long = 0L,
+    /** 收藏时用的书源，回到详情/阅读页要按它打开。旧数据没有这一项，默认番茄。 */
+    val source: String = Source.FANQIE.key,
 )
 
 @Serializable
@@ -25,6 +27,7 @@ data class Progress(
     val chapterIndex: Int,
     val charOffset: Int = 0,
     val updatedAt: Long = 0L,
+    val source: String = Source.FANQIE.key,
 )
 
 /** 书架与阅读进度：数据量小（手表上几十本），用文件持久化即可，不引入数据库。 */

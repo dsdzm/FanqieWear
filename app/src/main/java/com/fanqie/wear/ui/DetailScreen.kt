@@ -68,26 +68,15 @@ fun DetailScreen(
     LaunchedEffect(bookId, source, reload) {
         loading = true
         error = null
-        runCatching {
-            when (source) {
-                Source.FANQIE -> {
-                    val d = app.api.detail(bookId)
-                    val chapters = runCatching { app.api.directory(bookId) }.getOrDefault(emptyList())
-                    Triple(d.book, d.chapterCount, chapters.firstOrNull()?.itemId)
-                }
-                Source.QIMAO -> {
-                    val b = app.qimao.detail(bookId)
-                    val chapters = runCatching { app.qimao.catalog(bookId) }.getOrDefault(emptyList())
-                    Triple(b, chapters.size, chapters.firstOrNull()?.itemId)
-                }
+        runCatching { app.sources.of(source).detail(bookId) }
+            .onSuccess {
+                book = it.book
+                chapterCount = it.chapterCount
+                firstChapter = it.firstChapterId
             }
-        }.onSuccess { (b, count, first) ->
-            book = b
-            chapterCount = count
-            firstChapter = first
-        }.onFailure {
-            error = it.message ?: "加载失败"
-        }
+            .onFailure {
+                error = it.message ?: "加载失败"
+            }
         loading = false
     }
 
@@ -113,7 +102,13 @@ fun DetailScreen(
                                 app.shelf.remove(bookId)
                             } else {
                                 app.shelf.add(
-                                    ShelfItem(id = b.id, title = b.title, author = b.author, cover = b.cover)
+                                    ShelfItem(
+                                        id = b.id,
+                                        title = b.title,
+                                        author = b.author,
+                                        cover = b.cover,
+                                        source = source.key,
+                                    ),
                                 )
                             }
                             inShelf = !inShelf
@@ -124,7 +119,21 @@ fun DetailScreen(
 
             when {
                 loading -> item { LoadingBox("正在加载书籍") }
-                error != null -> item { HintBox(error!!, "重试") { reload++ } }
+                error != null -> item {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        HintBox(error!!, "重试") { reload++ }
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = "这本书来自「${source.label}」。如果这个源打不开，" +
+                                "可以到「设置 → 网络与书源」换源后，用书名重新搜一次。",
+                            fontSize = dims.label,
+                            color = LocalPalette.current.muted,
+                        )
+                    }
+                }
                 book != null -> {
                     val b = book!!
                     item {
@@ -167,10 +176,7 @@ fun DetailScreen(
                                 )
                                 Spacer(Modifier.height(3.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    MiniTag(
-                                        if (source == Source.QIMAO) "七猫" else "番茄",
-                                        if (source == Source.QIMAO) Color(0xFF3A6EA5) else Color(0xFF8A3A34),
-                                    )
+                                    MiniTag(source.label, sourceTint(source))
                                     if (b.category.isNotBlank()) MiniTag(b.category.take(5), Color(0xFF2F5A7A))
                                     if (b.finished) MiniTag("完结", Color(0xFF3C4A3E))
                                 }
@@ -192,7 +198,13 @@ fun DetailScreen(
                                 val target = app.shelf.progress(bookId)?.itemId ?: firstChapter
                                 if (target != null) {
                                     app.shelf.add(
-                                        ShelfItem(id = b.id, title = b.title, author = b.author, cover = b.cover)
+                                        ShelfItem(
+                                            id = b.id,
+                                            title = b.title,
+                                            author = b.author,
+                                            cover = b.cover,
+                                            source = source.key,
+                                        ),
                                     )
                                     inShelf = true
                                     onRead(target)
@@ -207,7 +219,7 @@ fun DetailScreen(
                         Pill(text = "目录 · $chapterCount 章", onClick = onChapters)
                     }
 
-                    if (source == Source.FANQIE) {
+                    if (app.sources.of(source).capability.chapter) {
                         item {
                             val task = tasks[bookId]
                             val localCount = remember(tasks, reload) {
@@ -256,7 +268,7 @@ fun DetailScreen(
                                                     text = "继续下载",
                                                     selected = true,
                                                     compact = true,
-                                                    onClick = { b.let { app.downloader.start(bookId, it.title, it.cover) } },
+                                                    onClick = { b.let { app.downloader.start(bookId, it.title, it.cover, source) } },
                                                 )
                                                 Pill(
                                                     text = "删除缓存",
@@ -283,12 +295,12 @@ fun DetailScreen(
                                                     text = "下载全本",
                                                     selected = true,
                                                     compact = true,
-                                                    onClick = { b.let { app.downloader.start(bookId, it.title, it.cover) } },
+                                                    onClick = { b.let { app.downloader.start(bookId, it.title, it.cover, source) } },
                                                 )
                                                 Pill(
                                                     text = "前 50 章",
                                                     compact = true,
-                                                    onClick = { b.let { app.downloader.start(bookId, it.title, it.cover, limit = 50) } },
+                                                    onClick = { b.let { app.downloader.start(bookId, it.title, it.cover, source, limit = 50) } },
                                                 )
                                             }
                                             if (task?.error != null) {
@@ -322,13 +334,14 @@ fun DetailScreen(
                         }
                     }
 
-                    if (source == Source.QIMAO) {
+                    val src = app.sources.of(source)
+                    if (!src.capability.chapter) {
                         item {
                             Text(
-                                text = "七猫源暂只支持浏览详情与目录，正文请切换番茄源阅读。",
+                                text = "${src.displayName}这个源暂不支持取正文，只能看详情和目录。想看正文请到「设置 → 网络与书源」换成笔趣阁。",
                                 fontSize = dims.label,
                                 color = Color(0xFFC98A5A),
-                                maxLines = 3,
+                                maxLines = 4,
                             )
                         }
                     }
@@ -338,4 +351,11 @@ fun DetailScreen(
             }
         }
     }
+}
+
+/** 书源配色：标签上区分来源，一眼知道这本书是从哪个源来的 */
+internal fun sourceTint(source: Source): Color = when (source) {
+    Source.BIQUGE -> Color(0xFF2F6B5A)
+    Source.QIMAO -> Color(0xFF3A6EA5)
+    Source.FANQIE -> Color(0xFF8A3A34)
 }

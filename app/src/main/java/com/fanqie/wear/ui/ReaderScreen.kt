@@ -124,6 +124,7 @@ fun ReaderScreen(
         loading = true
         error = null
         content = ""
+        val api = app.sources.of(source)
         val local = app.downloads.readChapter(bookId, currentId)
         if (local != null) {
             title = local.title
@@ -133,16 +134,16 @@ fun ReaderScreen(
             fromLocal = true
             locked = false
             loading = false
-            app.shelf.saveProgress(Progress(bookId, currentId, local.title, 0))
+            app.shelf.saveProgress(Progress(bookId, currentId, local.title, 0, source = source.key))
             return@LaunchedEffect
         }
         fromLocal = false
-        if (source == Source.QIMAO) {
-            error = "七猫源正文暂未支持，请切换到番茄源阅读"
+        if (!api.capability.chapter) {
+            error = "${api.displayName}暂不支持取正文，请到「设置 → 网络与书源」换成笔趣阁"
             loading = false
             return@LaunchedEffect
         }
-        runCatching { app.api.chapter(currentId) }
+        runCatching { api.chapter(bookId, currentId) }
             .onSuccess {
                 title = it.title
                 content = it.content
@@ -155,13 +156,14 @@ fun ReaderScreen(
                         itemId = it.itemId,
                         chapterTitle = it.title,
                         chapterIndex = 0,
+                        source = source.key,
                     ),
                 )
             }
             .onFailure { error = it.message ?: "正文加载失败" }
         loading = false
         if (settings.preloadNext) {
-            nextId?.let { runCatching { app.api.chapter(it) } }
+            nextId?.let { runCatching { api.chapter(bookId, it) } }
         }
     }
 

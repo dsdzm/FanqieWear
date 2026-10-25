@@ -39,6 +39,7 @@ import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.TimeText
 import coil.compose.AsyncImage
 import com.fanqie.wear.app
+import com.fanqie.wear.data.Source
 import com.fanqie.wear.ui.theme.FanqieRed
 import com.fanqie.wear.ui.theme.LocalPalette
 import com.fanqie.wear.ui.theme.rememberDeviceDims
@@ -48,7 +49,7 @@ import java.util.Locale
 
 /** 阅读历史：按最后阅读时间倒序 */
 @Composable
-fun HistoryScreen(onBack: () -> Unit, onOpen: (String, String, String) -> Unit) {
+fun HistoryScreen(onBack: () -> Unit, onOpen: (String, String, String, Source) -> Unit) {
     val dims = rememberDeviceDims()
     val state = rememberScalingLazyListState()
     var list by remember { mutableStateOf(app.shelf.allProgress()) }
@@ -80,7 +81,7 @@ fun HistoryScreen(onBack: () -> Unit, onOpen: (String, String, String) -> Unit) 
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(16.dp))
                         .background(LocalPalette.current.card)
-                        .clickable { onOpen(p.bookId, p.itemId, p.chapterTitle) }
+                        .clickable { onOpen(p.bookId, p.itemId, p.chapterTitle, Source.of(p.source)) }
                         .padding(horizontal = 10.dp, vertical = 9.dp),
                 ) {
                     Text(
