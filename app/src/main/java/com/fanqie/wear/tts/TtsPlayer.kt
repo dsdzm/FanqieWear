@@ -38,6 +38,21 @@ class TtsPlayer(private val context: Context) {
     private var zhAvailable = true
 
     init {
+        initEngine()
+    }
+
+    val engineReady: Boolean get() = initDone && zhAvailable
+
+    /** 用户刚去商店装了引擎 / 下载了语音包后调用，重新初始化 */
+    fun refresh() {
+        runCatching { tts?.shutdown() }
+        initDone = false
+        zhAvailable = true
+        _state.value = _state.value.copy(ready = false, error = null, playing = false)
+        initEngine()
+    }
+
+    private fun initEngine() {
         tts = TextToSpeech(context.applicationContext) { status ->
             initDone = status == TextToSpeech.SUCCESS
             if (!initDone) {

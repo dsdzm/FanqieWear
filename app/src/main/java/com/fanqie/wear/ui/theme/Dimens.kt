@@ -28,11 +28,12 @@ enum class SafeArea(val label: String, val factor: Float) {
     }
 }
 
-/** 界面缩放：字号与卡片高度一起放大，避免只放大文字把布局挤爆 */
+/** 界面缩放：字号、卡片高度、图标一起放大，避免只放大文字把布局挤爆 */
 enum class UiScale(val label: String, val factor: Float) {
     STANDARD("标准", 1f),
-    LARGE("大", 1.12f),
-    XL("超大", 1.25f),
+    LARGE("大", 1.18f),
+    XL("超大", 1.38f),
+    XXL("特大", 1.6f),
     ;
 
     companion object {
@@ -54,8 +55,8 @@ val LocalDisplayConfig = staticCompositionLocalOf { DisplayConfig() }
 /**
  * 屏幕适配参数。
  *
- * 320×320@2x 的圆表只有 160dp 可用宽，圆形屏两侧还会被弧线切掉，
- * 所以边距不能写死，必须按「宽度比例 × 安全区档位」算。
+ * 字号不再写死：以 168dp 宽的 320×320 圆表为基准，屏越宽字号越大（0.92×～1.6×），
+ * 再叠加用户在设置里选的「界面缩放」。320 表上字不挤，480 表上字不糊。
  */
 @Immutable
 data class DeviceDims(
@@ -73,6 +74,7 @@ data class DeviceDims(
     val buttonHeight: Dp,
     val corner: Dp,
     val safeArea: SafeArea,
+    val uiScale: UiScale,
     val titleLarge: TextUnit,
     val titleMedium: TextUnit,
     val titleSmall: TextUnit,
@@ -83,7 +85,6 @@ data class DeviceDims(
     val listPadding: PaddingValues
         get() = PaddingValues(start = sidePadding, end = sidePadding, top = topPadding, bottom = bottomPadding)
 
-    /** 内切圆半径：圆屏时用来判断内容是否越界 */
     val innerRadius: Dp get() = (widthDp / 2).dp - sidePadding
 }
 
@@ -96,10 +97,12 @@ fun rememberDeviceDims(): DeviceDims {
     return remember(width, height, cfg.isScreenRound, display) {
         val narrow = width <= 190
         val round = cfg.isScreenRound
-        // 出厂边距：圆屏按宽度的 7.5%，方屏 4.5%
+        // 出厂边距：圆屏按宽度的 7.8%，方屏 5.8%
         val base = width * (if (round) 0.078f else 0.058f)
         val side = (base * display.safeArea.factor).toFloat().coerceIn(3f, width * 0.22f).dp
-        val s = display.uiScale.factor
+        // 以 320×320（160dp）为基准，按屏宽放大字号
+        val screenScale = (width / 168f).coerceIn(0.92f, 1.6f)
+        val s = screenScale * display.uiScale.factor
         DeviceDims(
             isRound = round,
             widthDp = width,
@@ -107,19 +110,20 @@ fun rememberDeviceDims(): DeviceDims {
             narrow = narrow,
             sidePadding = side,
             topPadding = (side * 0.85f).coerceAtLeast(2.dp),
-            bottomPadding = (side * 1.1f).coerceIn(2.dp, 26.dp),
+            bottomPadding = (side * 1.1f).coerceIn(2.dp, 30.dp),
             gridGap = (if (narrow) 6.dp else 8.dp) * s,
-            cardHeight = ((if (narrow) 52.dp else 60.dp) * s),
-            iconBubble = ((if (narrow) 32.dp else 38.dp) * s),
-            iconSize = ((if (narrow) 17.dp else 20.dp) * s),
-            buttonHeight = ((if (narrow) 40.dp else 46.dp) * s),
-            corner = ((if (narrow) 18.dp else 22.dp) * s),
+            cardHeight = (if (narrow) 54.dp else 62.dp) * s,
+            iconBubble = (if (narrow) 33.dp else 38.dp) * s,
+            iconSize = (if (narrow) 17.dp else 20.dp) * s,
+            buttonHeight = (if (narrow) 40.dp else 46.dp) * s,
+            corner = (if (narrow) 18.dp else 22.dp) * s,
             safeArea = display.safeArea,
-            titleLarge = (if (narrow) 17f else 20f).times(s).sp,
-            titleMedium = (if (narrow) 14f else 16f).times(s).sp,
-            titleSmall = (if (narrow) 12.5f else 14f).times(s).sp,
-            body = (if (narrow) 11.5f else 13f).times(s).sp,
-            label = (if (narrow) 10f else 11f).times(s).sp,
+            uiScale = display.uiScale,
+            titleLarge = (18f * s).sp,
+            titleMedium = (15f * s).sp,
+            titleSmall = (13.5f * s).sp,
+            body = (12.5f * s).sp,
+            label = (11f * s).sp,
         )
     }
 }

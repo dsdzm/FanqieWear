@@ -13,8 +13,8 @@ import androidx.wear.compose.material3.Typography
  * 这样「界面缩放」「安全区」两个设置才能真正生效。
  */
 @Composable
-fun FanqieWearTheme(theme: Int = 0, content: @Composable () -> Unit) {
-    val palette = paletteFor(theme)
+fun FanqieWearTheme(theme: Int = 0, accent: Int = 0, content: @Composable () -> Unit) {
+    val palette = paletteFor(theme, accent)
     CompositionLocalProvider(LocalPalette provides palette) {
         MaterialTheme(
             typography = WearTypography,

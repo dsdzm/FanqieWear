@@ -1,6 +1,8 @@
 package com.fanqie.wear.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -33,6 +35,7 @@ import com.fanqie.wear.ui.theme.LocalPalette
 import com.fanqie.wear.ui.theme.rememberDeviceDims
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun RankScreen(
     initialMale: Boolean,
@@ -138,15 +141,24 @@ fun RankScreen(
             }
 
             if (picking) {
-                items(cats.size) { i ->
-                    Pill(
-                        text = cats[i].name,
-                        selected = i == catIndex,
-                        onClick = {
-                            catIndex = i
-                            picking = false
-                        },
-                    )
+                item {
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        cats.forEachIndexed { i, c ->
+                            Pill(
+                                text = c.name,
+                                selected = i == catIndex,
+                                compact = true,
+                                onClick = {
+                                    catIndex = i
+                                    picking = false
+                                },
+                            )
+                        }
+                    }
                 }
             } else {
                 if (loading && books.isEmpty()) {

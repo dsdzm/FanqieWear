@@ -2,8 +2,9 @@
 
 一个跑在 **Wear OS / Android 8+ 手表**上的免费小说阅读器，纯 Jetpack Compose + Wear Compose 实现。
 书荒广场支持 **番茄 / 七猫 双源**，含排行榜、搜索、书架、阅读历史、TTS 听书。
-v1.2 起界面按 **Wear OS 原生交互** 重做：中心突出缩放列表、表冠吸附滚动、边缘右滑返回、震动反馈，
-并把 **安全区** 做成可调项（5 档 + 实时预览），最小可跑 **320×320（160dp）** 圆表，也适配 384/416/454 与方屏。
+v1.3 在 1.2 的基础上补了 **离线下载**、**滚动/翻页两种阅读方式**、**字色与主题色**、**TTS 引擎安装引导**，
+界面按 **Wear OS 原生交互** 实现：中心突出缩放列表、表冠吸附滚动、边缘右滑返回、震动反馈。
+字号不再写死，会随屏宽（168dp 基准）自动放大，另有 4 档「界面缩放」和 5 档「安全区」可调。
 
 > 数据来自番茄小说、七猫免费小说的公开接口，非官方 App，仅供学习研究。请支持正版、尊重作者版权。
 
@@ -86,6 +87,11 @@ App 内对这条路径有明确提示，不会静默失败。
 - 双击正文：打开目录
 - 读到页尾自动接下一章（可关），可预加载下一章正文
 
+## 二之二、离线下载
+
+书籍详情页 →「下载全本」或「前 50 章」，整本缓存到手表本地（`filesDir/downloads/<bookId>/`），
+阅读时优先读本地文件，断网也能看；下载在应用级协程里跑，切页面不中断，可在「离线下载」页看进度、取消、删除。
+
 ## 三、安全区与小屏适配（重点）
 
 320×320 在 2x 密度下只有 **160dp 宽**，圆屏两侧还会被弧线切掉，所以边距不写死：
@@ -100,9 +106,9 @@ App 内对这条路径有明确提示，不会静默失败。
 
 | 分组 | 可调项 |
 | --- | --- |
-| 阅读外观 | 字号、行距、段间距、6 种背景、两端对齐、屏幕常亮 |
-| 阅读操作 | 表冠翻章、自动下一章、预加载下一章 |
-| 界面与安全区 | 主题、界面缩放、安全区（含预览）、列表显示封面 |
+| 阅读外观 | 字号（4 档）、行距（4 档）、段间距、6 种背景、6 种字色、两端对齐、屏幕常亮 |
+| 阅读操作 | 阅读方式（滚动/翻页）、翻页动画、表冠翻章、表冠速度、自动下一章、预加载下一章、启动后续读、底部进度 |
+| 界面与安全区 | 主题、主题色（5 套）、界面缩放（4 档）、安全区（含预览）、列表显示封面 |
 | 语音听书 | 语速、音调、试听 |
 | 下载与存储 | 缓存统计与清理 |
 | 网络与书源 | 默认书源、接口状态 |
@@ -115,10 +121,10 @@ App 内对这条路径有明确提示，不会静默失败。
 
 ```bash
 export ANDROID_HOME=/path/to/android-sdk
-gradle :app:assembleDebug           # 产物：app/build/outputs/apk/debug/app-debug.apk
+gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 3 / versionName 1.2.0
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 4 / versionName 1.3.0
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6（`ScalingLazyColumn` / `rotary`）、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -127,6 +133,18 @@ gradle :app:assembleDebug           # 产物：app/build/outputs/apk/debug/app-d
 ```bash
 adb install -r app-debug.apk
 ```
+
+## 四之二、TTS 引擎
+
+手表 ROM 常常删掉语音引擎，App 不能内置完整的 TTS 引擎，所以设置页「语音听书」提供了安装渠道：
+
+- 显示当前引擎名、是否就绪、缺中文语音包时的原因
+- 「安装语音引擎」→ 跳 Play 商店（Google 文字转语音），失败则跳网页
+- 「系统语音设置」→ 跳系统 TTS 设置下载离线语音包
+- 列出常见引擎（Google / 讯飞 / 百度）并标注是否已安装，点一下直接去装
+- 装完点「重新检测」，`TtsPlayer.refresh()` 会重新初始化引擎
+
+阅读页在引擎不可用时也会显示一条「点此安装」的提示条。
 
 ## 五、已知限制
 

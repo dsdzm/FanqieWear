@@ -3,12 +3,13 @@ package com.fanqie.wear.ui.theme
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 
 /**
  * 自定义配色（不套用任何现成产品的视觉）。
  *
- * 主色取「赤陶」#E96A4F，副色「青瓷」#5FB3A1，底子是偏蓝的墨色渐变，
- * 卡片是半透明的玻璃层（12% 白边框 + 轻微渐变），在 OLED 上层次清楚又不刺眼。
+ * 底色是偏蓝的墨色渐变，卡片是半透明的玻璃层（12% 白边框 + 轻微渐变）；
+ * 强调色（主题色）可从设置里换：赤陶 / 青瓷 / 靛蓝 / 琥珀 / 紫藤。
  */
 @Immutable
 data class Palette(
@@ -67,10 +68,32 @@ val PaperPalette = Palette(
     isLight = true,
 )
 
-fun paletteFor(theme: Int): Palette = when (theme) {
-    1 -> OledPalette
-    2 -> PaperPalette
-    else -> InkPalette
+/** 主题色：主色 + 副色（列表图标交替使用） */
+data class AccentPack(val label: String, val main: Color, val second: Color, val darkMain: Color)
+
+val AccentPacks = listOf(
+    AccentPack("赤陶", Color(0xFFE96A4F), Color(0xFF5FB3A1), Color(0xFFC94B33)),
+    AccentPack("青瓷", Color(0xFF4FBFA8), Color(0xFF7E9CFF), Color(0xFF2F8A78)),
+    AccentPack("靛蓝", Color(0xFF6C8CFF), Color(0xFFE4B45C), Color(0xFF4560C9)),
+    AccentPack("琥珀", Color(0xFFE9A13B), Color(0xFF5FB3A1), Color(0xFFB87A1F)),
+    AccentPack("紫藤", Color(0xFFA98BFF), Color(0xFFE4A0B8), Color(0xFF7A5FD0)),
+)
+
+fun paletteFor(theme: Int, accentIndex: Int = 0): Palette {
+    val base = when (theme) {
+        1 -> OledPalette
+        2 -> PaperPalette
+        else -> InkPalette
+    }
+    val pack = AccentPacks.getOrElse(accentIndex) { AccentPacks[0] }
+    val main = if (base.isLight) pack.darkMain else pack.main
+    val onAccent = if (base.isLight) Color.White else Color(0xFF120806)
+    return base.copy(
+        accent = main,
+        accentSoft = lerp(main, base.bgTop, 0.78f),
+        onAccent = onAccent,
+        jade = pack.second,
+    )
 }
 
 val LocalPalette = staticCompositionLocalOf { InkPalette }

@@ -36,6 +36,7 @@ import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.TimeText
 import coil.compose.AsyncImage
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fanqie.wear.app
 import com.fanqie.wear.data.Book
 import com.fanqie.wear.data.ShelfItem
@@ -62,6 +63,7 @@ fun DetailScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var inShelf by remember { mutableStateOf(app.shelf.contains(bookId)) }
     var reload by remember { mutableIntStateOf(0) }
+    val tasks by app.downloader.tasks.collectAsStateWithLifecycle()
 
     LaunchedEffect(bookId, source, reload) {
         loading = true
@@ -203,6 +205,105 @@ fun DetailScreen(
 
                     item {
                         Pill(text = "目录 · $chapterCount 章", onClick = onChapters)
+                    }
+
+                    if (source == Source.FANQIE) {
+                        item {
+                            val task = tasks[bookId]
+                            val localCount = remember(tasks, reload) {
+                                app.downloads.list().firstOrNull { it.bookId == bookId }?.done ?: 0
+                            }
+                            GlassCard {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                ) {
+                                    when {
+                                        task?.running == true -> {
+                                            Text(
+                                                text = "下载中 ${task.done}/${task.total.coerceAtLeast(1)} 章",
+                                                fontSize = dims.titleSmall,
+                                                color = LocalPalette.current.text,
+                                            )
+                                            Spacer(Modifier.height(5.dp))
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(3.dp)
+                                                    .clip(RoundedCornerShape(2.dp))
+                                                    .background(LocalPalette.current.divider),
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth(task.progress)
+                                                        .height(3.dp)
+                                                        .background(LocalPalette.current.accent),
+                                                )
+                                            }
+                                            Spacer(Modifier.height(7.dp))
+                                            Pill(text = "取消下载", onClick = { app.downloader.cancel(bookId) }, compact = true)
+                                        }
+                                        localCount > 0 -> {
+                                            Text(
+                                                text = "已缓存 $localCount 章 · 可离线阅读",
+                                                fontSize = dims.titleSmall,
+                                                color = LocalPalette.current.text,
+                                            )
+                                            Spacer(Modifier.height(6.dp))
+                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                Pill(
+                                                    text = "继续下载",
+                                                    selected = true,
+                                                    compact = true,
+                                                    onClick = { b.let { app.downloader.start(bookId, it.title, it.cover) } },
+                                                )
+                                                Pill(
+                                                    text = "删除缓存",
+                                                    compact = true,
+                                                    onClick = { app.downloads.delete(bookId); reload++ },
+                                                )
+                                            }
+                                        }
+                                        else -> {
+                                            Text(
+                                                text = "离线下载",
+                                                fontSize = dims.titleSmall,
+                                                color = LocalPalette.current.text,
+                                            )
+                                            Text(
+                                                text = "整本缓存到手表，没网也能看",
+                                                fontSize = dims.label,
+                                                color = LocalPalette.current.muted,
+                                                maxLines = 2,
+                                            )
+                                            Spacer(Modifier.height(6.dp))
+                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                Pill(
+                                                    text = "下载全本",
+                                                    selected = true,
+                                                    compact = true,
+                                                    onClick = { b.let { app.downloader.start(bookId, it.title, it.cover) } },
+                                                )
+                                                Pill(
+                                                    text = "前 50 章",
+                                                    compact = true,
+                                                    onClick = { b.let { app.downloader.start(bookId, it.title, it.cover, limit = 50) } },
+                                                )
+                                            }
+                                            if (task?.error != null) {
+                                                Text(
+                                                    text = task.error!!,
+                                                    fontSize = dims.label,
+                                                    color = LocalPalette.current.accent,
+                                                    maxLines = 2,
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     if (b.intro.isNotBlank()) {

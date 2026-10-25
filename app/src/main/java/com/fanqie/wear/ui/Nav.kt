@@ -44,7 +44,23 @@ sealed interface Dest {
  */
 @Composable
 fun FanqieWearApp() {
-    var stack by remember { mutableStateOf(listOf<Dest>(Dest.Home)) }
+    var stack by remember {
+        mutableStateOf(
+            if (app.settings.value.startContinue) {
+                val last = app.shelf.all().firstOrNull { !it.lastChapterId.isNullOrBlank() }
+                if (last != null) {
+                    listOf<Dest>(
+                        Dest.Home,
+                        Dest.Reader(last.id, last.lastChapterId!!, last.title, Source.FANQIE),
+                    )
+                } else {
+                    listOf(Dest.Home)
+                }
+            } else {
+                listOf(Dest.Home)
+            },
+        )
+    }
     fun push(d: Dest) { stack = stack + d }
     fun pop() { if (stack.size > 1) stack = stack.dropLast(1) }
 
@@ -58,7 +74,7 @@ fun FanqieWearApp() {
 
     BackHandler(enabled = stack.size > 1) { pop() }
 
-    FanqieWearTheme(theme = settings.theme) {
+    FanqieWearTheme(theme = settings.theme, accent = settings.accent) {
         CompositionLocalProvider(LocalDisplayConfig provides display) {
             val p = LocalPalette.current
             Box(modifier = Modifier.fillMaxSize()) {

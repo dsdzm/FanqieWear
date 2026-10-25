@@ -6,30 +6,43 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 data class AppSettings(
-    /** 字号档位 0/1/2 */
+    /** 字号档位 0/1/2/3 */
     val fontStep: Int = 1,
-    /** 行距档位 0/1/2 */
+    /** 行距档位 0/1/2/3 */
     val lineStep: Int = 1,
     /** 段间距档位 0/1/2 */
     val paraStep: Int = 1,
     /** 阅读背景：0 纯黑 1 米黄 2 护眼绿 3 深灰 4 青灰 5 纸白 */
     val readerBg: Int = 0,
+    /** 阅读字色：0 默认 1 米白 2 浅灰 3 暖黄 4 淡青 5 墨黑 */
+    val charColor: Int = 0,
     /** 正文两端对齐 */
     val justify: Boolean = false,
     /** 阅读时保持屏幕常亮 */
     val keepAwake: Boolean = true,
-    /** 翻页方式：0 滚动 1 上下翻页 */
+
+    /** 阅读方式：0 滚动 1 翻页 */
     val pageMode: Int = 0,
+    /** 翻页动画：0 无 1 淡入 2 滑动 */
+    val pageAnim: Int = 1,
     /** 旋转表冠翻章 */
     val crownTurn: Boolean = true,
+    /** 表冠速度：0 慢 1 标准 2 快 */
+    val crownSpeed: Int = 1,
     /** 读到章末自动下一章 */
     val autoNext: Boolean = true,
-    /** 预加载下一章，减少翻章等待 */
+    /** 预加载下一章 */
     val preloadNext: Boolean = true,
+    /** 启动直接进入上次阅读 */
+    val startContinue: Boolean = false,
+    /** 阅读页底部显示进度 */
+    val bottomProgress: Boolean = true,
 
     /** 界面主题：0 墨夜 1 纯黑 2 纸白 */
     val theme: Int = 0,
-    /** 界面缩放：0 标准 1 大 2 超大 */
+    /** 主题色：0 赤陶 1 青瓷 2 靛蓝 3 琥珀 4 紫藤 */
+    val accent: Int = 0,
+    /** 界面缩放：0 标准 1 大 2 超大 3 特大 */
     val uiScale: Int = 0,
     /** 安全区：0 自动 1 紧凑 2 标准 3 宽松 4 最宽 */
     val safeArea: Int = 0,
@@ -65,13 +78,19 @@ class SettingsStore(context: Context) {
         lineStep = sp.getInt("lineStep", 1),
         paraStep = sp.getInt("paraStep", 1),
         readerBg = sp.getInt("readerBg", 0),
+        charColor = sp.getInt("charColor", 0),
         justify = sp.getBoolean("justify", false),
         keepAwake = sp.getBoolean("keepAwake", true),
         pageMode = sp.getInt("pageMode", 0),
+        pageAnim = sp.getInt("pageAnim", 1),
         crownTurn = sp.getBoolean("crownTurn", true),
+        crownSpeed = sp.getInt("crownSpeed", 1),
         autoNext = sp.getBoolean("autoNext", true),
         preloadNext = sp.getBoolean("preloadNext", true),
+        startContinue = sp.getBoolean("startContinue", false),
+        bottomProgress = sp.getBoolean("bottomProgress", true),
         theme = sp.getInt("theme", 0),
+        accent = sp.getInt("accent", 0),
         uiScale = sp.getInt("uiScale", 0),
         safeArea = sp.getInt("safeArea", 0),
         showCover = sp.getBoolean("showCover", true),
@@ -91,13 +110,19 @@ class SettingsStore(context: Context) {
             .putInt("lineStep", n.lineStep)
             .putInt("paraStep", n.paraStep)
             .putInt("readerBg", n.readerBg)
+            .putInt("charColor", n.charColor)
             .putBoolean("justify", n.justify)
             .putBoolean("keepAwake", n.keepAwake)
             .putInt("pageMode", n.pageMode)
+            .putInt("pageAnim", n.pageAnim)
             .putBoolean("crownTurn", n.crownTurn)
+            .putInt("crownSpeed", n.crownSpeed)
             .putBoolean("autoNext", n.autoNext)
             .putBoolean("preloadNext", n.preloadNext)
+            .putBoolean("startContinue", n.startContinue)
+            .putBoolean("bottomProgress", n.bottomProgress)
             .putInt("theme", n.theme)
+            .putInt("accent", n.accent)
             .putInt("uiScale", n.uiScale)
             .putInt("safeArea", n.safeArea)
             .putBoolean("showCover", n.showCover)

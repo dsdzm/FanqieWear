@@ -3,6 +3,7 @@ package com.fanqie.wear.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -28,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
@@ -175,18 +178,16 @@ private fun Stat(value: String, label: String) {
     }
 }
 
-/** 下载与缓存：目前只做缓存统计/清理，正文离线缓存未实现 */
+/** 下载与缓存：离线书籍列表 + 正在下载的任务 + 空间清理 */
 @Composable
 fun DownloadScreen(onBack: () -> Unit) {
     val dims = rememberDeviceDims()
+    val p = LocalPalette.current
     val state = rememberScalingLazyListState()
+    val tasks by app.downloader.tasks.collectAsStateWithLifecycle()
+    var tick by remember { mutableIntStateOf(0) }
+    val books = remember(tick, tasks) { app.downloads.list() }
     var info by remember { mutableStateOf("") }
-
-    fun scan(): String {
-        var size = 0L
-        app.cacheDir.walkTopDown().forEach { if (it.isFile) size += it.length() }
-        return "缓存占用 ${size / 1024} KB"
-    }
 
     ScreenScaffold(
             scrollState = state,
@@ -199,37 +200,137 @@ fun DownloadScreen(onBack: () -> Unit) {
             contentPadding = dims.listPadding,
             verticalArrangement = Arrangement.spacedBy(dims.gridGap),
         ) {
-            item { TopBar(title = "下载与缓存", onBack = onBack) }
+            item { TopBar(title = "离线下载", onBack = onBack) }
+
             item {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(LocalPalette.current.card)
-                        .padding(12.dp),
-                ) {
-                    Text("正文缓存", fontSize = dims.titleSmall, fontWeight = FontWeight.Medium)
-                    Text(
-                        text = "手表端暂不提供整本离线下载：正文按章实时拉取，已读章节会复用内存缓存。",
-                        fontSize = dims.label,
-                        color = LocalPalette.current.muted,
-                        maxLines = 4,
-                    )
+                Text(
+                    text = "已下载 ${books.size} 本 · 占用 ${formatSize(app.downloads.totalBytes())}",
+                    fontSize = dims.label,
+                    color = p.muted,
+                )
+            }
+
+            val running = tasks.values.filter { it.running }
+            if (running.isNotEmpty()) {
+                item { SectionLabel("正在下载") }
+                items(running.size) { i ->
+                    val t = running[i]
+                    GlassCard {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = t.title,
+                                    fontSize = dims.titleSmall,
+                                    color = p.text,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Text(
+                                    text = "${t.done}/${t.total.coerceAtLeast(1)}",
+                                    fontSize = dims.label,
+                                    color = p.muted,
+                                )
+                            }
+                            Spacer(Modifier.height(5.dp))
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(3.dp)
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(p.divider),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(t.progress)
+                                        .height(3.dp)
+                                        .background(p.accent),
+                                )
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Pill(text = "取消", compact = true, onClick = { app.downloader.cancel(t.bookId) })
+                        }
+                    }
                 }
             }
-            item { Pill(text = "统计缓存", selected = true, onClick = { info = scan() }) }
+
+            if (books.isEmpty()) {
+                item {
+                    HintBox("还没有离线书籍。\n在书籍详情页点「下载全本」即可缓存到手表。")
+                }
+            } else {
+                item { SectionLabel("已下载") }
+                items(books.size) { i ->
+                    val b = books[i]
+                    GlassCard {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 9.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            CoverBox(b.cover, dims)
+                            Spacer(Modifier.width(9.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = b.title,
+                                    fontSize = dims.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = p.text,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = "${b.done}/${b.total} 章 · ${b.sizeText}",
+                                    fontSize = dims.label,
+                                    color = p.muted,
+                                    maxLines = 1,
+                                )
+                            }
+                            Pill(
+                                text = "删除",
+                                compact = true,
+                                onClick = {
+                                    app.downloads.delete(b.bookId)
+                                    tick++
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Pill(text = "刷新", compact = true, onClick = { tick++ })
+                    if (books.isNotEmpty()) {
+                        Pill(
+                            text = "清空全部",
+                            compact = true,
+                            onClick = {
+                                app.downloads.deleteAll()
+                                tick++
+                            },
+                        )
+                    }
+                }
+            }
             if (info.isNotBlank()) {
                 item {
-                    Text(info, fontSize = dims.label, color = LocalPalette.current.muted)
+                    Text(info, fontSize = dims.label, color = p.muted, maxLines = 2)
                 }
             }
-            item {
-                Pill(text = "清理缓存", onClick = {
-                    app.cacheDir.listFiles()?.forEach { it.deleteRecursively() }
-                    info = "已清理"
-                })
-            }
-            item { Spacer(Modifier.height(10.dp)) }
+            item { Spacer(Modifier.height(12.dp)) }
         }
     }
 }
+
+private fun formatSize(bytes: Long): String =
+    if (bytes > 1024 * 1024) String.format("%.1f MB", bytes / 1024f / 1024f) else "${bytes / 1024} KB"

@@ -22,7 +22,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -31,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,6 +46,8 @@ import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.TimeText
 import com.fanqie.wear.R
 import com.fanqie.wear.app
+import com.fanqie.wear.tts.TtsEngines
+import com.fanqie.wear.ui.theme.AccentPacks
 import com.fanqie.wear.ui.theme.LocalPalette
 import com.fanqie.wear.ui.theme.SafeArea
 import com.fanqie.wear.ui.theme.UiScale
@@ -122,12 +127,12 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit) {
             when (page) {
                 0 -> {
                     item {
-                        ChoiceCard("字号", listOf("小", "中", "大"), s.fontStep) { v ->
+                        ChoiceCard("字号", listOf("小", "中", "大", "特大"), s.fontStep) { v ->
                             app.settings.update { it.copy(fontStep = v) }
                         }
                     }
                     item {
-                        ChoiceCard("行距", listOf("紧", "标准", "松"), s.lineStep) { v ->
+                        ChoiceCard("行距", listOf("紧", "标准", "松", "很松"), s.lineStep) { v ->
                             app.settings.update { it.copy(lineStep = v) }
                         }
                     }
@@ -137,6 +142,7 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit) {
                         }
                     }
                     item { BgSwatchCard(s.readerBg) { v -> app.settings.update { it.copy(readerBg = v) } } }
+                    item { CharColorCard(s.charColor) { v -> app.settings.update { it.copy(charColor = v) } } }
                     item {
                         SwitchCard("两端对齐", "正文左右对齐，边缘更整齐", s.justify) {
                             app.settings.update { it.copy(justify = it.justify.not()) }
@@ -151,7 +157,22 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit) {
 
                 1 -> {
                     item {
-                        SwitchCard("表冠翻章", "旋转表冠切换上一章/下一章", s.crownTurn) {
+                        ChoiceCard("阅读方式", listOf("滚动", "翻页"), s.pageMode) { v ->
+                            app.settings.update { it.copy(pageMode = v) }
+                        }
+                    }
+                    item {
+                        ChoiceCard("翻页动画", listOf("无", "淡入", "滑动"), s.pageAnim) { v ->
+                            app.settings.update { it.copy(pageAnim = v) }
+                        }
+                    }
+                    item {
+                        ChoiceCard("表冠速度", listOf("慢", "标准", "快"), s.crownSpeed) { v ->
+                            app.settings.update { it.copy(crownSpeed = v) }
+                        }
+                    }
+                    item {
+                        SwitchCard("表冠翻章", "滚动模式下转表冠切上一章/下一章", s.crownTurn) {
                             app.settings.update { it.copy(crownTurn = it.crownTurn.not()) }
                         }
                     }
@@ -166,8 +187,18 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit) {
                         }
                     }
                     item {
+                        SwitchCard("启动后续读", "打开 App 直接回到上次的章节", s.startContinue) {
+                            app.settings.update { it.copy(startContinue = it.startContinue.not()) }
+                        }
+                    }
+                    item {
+                        SwitchCard("底部进度", "阅读页底部显示进度条与页码", s.bottomProgress) {
+                            app.settings.update { it.copy(bottomProgress = it.bottomProgress.not()) }
+                        }
+                    }
+                    item {
                         Text(
-                            text = "提示：阅读页左右滑动可切换章节，双击正文回到目录。",
+                            text = "翻页模式下：左右两侧点按翻页、双击正文进目录、表冠逐页翻。",
                             fontSize = dims.label,
                             color = p.muted,
                             maxLines = 3,
@@ -181,6 +212,7 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit) {
                             app.settings.update { it.copy(theme = v) }
                         }
                     }
+                    item { AccentCard(s.accent) { v -> app.settings.update { it.copy(accent = v) } } }
                     item {
                         ChoiceCard("界面缩放", UiScale.entries.map { it.label }, s.uiScale) { v ->
                             app.settings.update { it.copy(uiScale = v) }
@@ -195,6 +227,7 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit) {
                 }
 
                 3 -> {
+                    item { TtsStatusCard() }
                     item {
                         ChoiceCard(
                             "语速",
@@ -552,6 +585,197 @@ private fun SafeAreaCard(selected: Int, onSelect: (Int) -> Unit) {
                 color = p.muted,
                 maxLines = 3,
             )
+        }
+    }
+}
+
+private val CharColorList = listOf(
+    Color(0xFFE6E6E6), Color(0xFFEDE6D8), Color(0xFFB9BEC2),
+    Color(0xFFE8C98A), Color(0xFF9FD6C8), Color(0xFF1B1B1B),
+)
+
+/** 阅读字色：6 个色块，0 号为「跟随背景」 */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CharColorCard(selected: Int, onSelect: (Int) -> Unit) {
+    val p = LocalPalette.current
+    val dims = rememberDeviceDims()
+    GlassCard {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 9.dp, vertical = 8.dp),
+        ) {
+            Text(
+                text = if (selected == 0) "阅读字色 · 跟随背景" else "阅读字色",
+                fontSize = dims.label,
+                color = p.muted,
+            )
+            Spacer(Modifier.height(5.dp))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                CharColorList.forEachIndexed { i, c ->
+                    Box(
+                        modifier = Modifier
+                            .size(26.dp)
+                            .clip(CircleShape)
+                            .background(c)
+                            .border(
+                                width = if (selected == i) 2.dp else 1.dp,
+                                color = if (selected == i) p.accent else p.cardBorder,
+                                shape = CircleShape,
+                            )
+                            .clickable { onSelect(i) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (i == 0) Text("A", fontSize = dims.label, color = Color(0xFF888888))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 主题色：5 套强调色 */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AccentCard(selected: Int, onSelect: (Int) -> Unit) {
+    val p = LocalPalette.current
+    val dims = rememberDeviceDims()
+    GlassCard {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 9.dp, vertical = 8.dp),
+        ) {
+            Text("主题色 · ${AccentPacks.getOrElse(selected) { AccentPacks[0] }.label}", fontSize = dims.label, color = p.muted)
+            Spacer(Modifier.height(5.dp))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                AccentPacks.forEachIndexed { i, pack ->
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(pack.main)
+                            .border(
+                                width = if (selected == i) 3.dp else 1.dp,
+                                color = if (selected == i) p.text else p.cardBorder,
+                                shape = CircleShape,
+                            )
+                            .clickable { onSelect(i) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** TTS 状态卡：检测引擎、跳商店安装、跳系统语音设置下载离线语音包 */
+@Composable
+private fun TtsStatusCard() {
+    val p = LocalPalette.current
+    val dims = rememberDeviceDims()
+    val ctx = LocalContext.current
+    val ttsState by app.tts.state.collectAsStateWithLifecycle()
+    var tick by remember { mutableIntStateOf(0) }
+    val installed = remember(tick) { TtsEngines.installedPackages(ctx) }
+    var engineName by remember(tick) { mutableStateOf<String?>(null) }
+    LaunchedEffect(tick) {
+        engineName = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            TtsEngines.defaultEngine(ctx)
+        }
+    }
+
+    GlassCard {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 9.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(if (ttsState.ready) p.jade else p.accent),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = when {
+                        ttsState.ready -> "语音引擎就绪"
+                        ttsState.error != null -> "语音引擎不可用"
+                        else -> "正在初始化语音引擎"
+                    },
+                    fontSize = dims.titleSmall,
+                    color = p.text,
+                    maxLines = 1,
+                )
+            }
+            Spacer(Modifier.height(3.dp))
+            Text(
+                text = buildString {
+                    append("引擎：").append(engineName ?: "检测中…")
+                    if (ttsState.error != null) append("\n").append(ttsState.error)
+                },
+                fontSize = dims.label,
+                color = p.muted,
+                maxLines = 3,
+            )
+            Spacer(Modifier.height(6.dp))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                Pill(
+                    text = "安装语音引擎",
+                    selected = true,
+                    compact = true,
+                    onClick = { TtsEngines.openStore(ctx, "com.google.android.tts") },
+                )
+                Pill(
+                    text = "系统语音设置",
+                    compact = true,
+                    onClick = { TtsEngines.openSettings(ctx) },
+                )
+                Pill(
+                    text = "重新检测",
+                    compact = true,
+                    onClick = {
+                        app.tts.refresh()
+                        tick++
+                    },
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            TtsEngines.candidates.forEach { c ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { TtsEngines.openStore(ctx, c.pkg) }
+                        .padding(vertical = 2.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(5.dp)
+                            .clip(CircleShape)
+                            .background(if (c.pkg in installed) p.jade else p.divider),
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        text = if (c.pkg in installed) "${c.label} · 已安装" else c.label,
+                        fontSize = dims.label,
+                        color = if (c.pkg in installed) p.muted else p.text,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
     }
 }
