@@ -2,7 +2,9 @@ package com.fanqie.wear.tts
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioTrack
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
@@ -98,6 +100,16 @@ class TtsPlayer(private val context: Context) {
     fun play() {
         val s = _state.value
         if (s.sentences.isEmpty()) return
+
+        // 不少 Wear OS 表根本没扬声器，这种情况先说清楚，免得以为是引擎坏了
+        if (!hasAnyOutput()) {
+            _state.value = s.copy(
+                playing = false,
+                error = "没检测到音频输出设备：这台手表可能没有扬声器，连上蓝牙耳机再试",
+            )
+            return
+        }
+
         TtsService.start(context, s.title)
         _state.value = s.copy(playing = true, error = null)
         job?.cancel()
@@ -112,6 +124,21 @@ class TtsPlayer(private val context: Context) {
             playFrom(_state.value.index)
         }
     }
+
+    /** 有没有可用的音频输出：内置扬声器或已连接蓝牙/A2DP */
+    private fun hasAnyOutput(): Boolean = runCatching {
+        val am = context.getSystemService(AudioManager::class.java) ?: return true
+        val outputs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+        if (outputs.isEmpty()) return true
+        outputs.any {
+            it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER ||
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                it.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+                it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET
+        }
+    }.getOrDefault(true)
 
     fun pause() {
         job?.cancel()

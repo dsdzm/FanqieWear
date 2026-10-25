@@ -119,6 +119,7 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
     val scope = rememberCoroutineScope()
     var checking by remember { mutableStateOf(false) }
     var probeResults by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var crashText by remember { mutableStateOf(app.lastCrash()) }
 
     ScreenScaffold(
             scrollState = state,
@@ -470,6 +471,42 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                             }
                         }
                     }
+                    val crash = crashText
+                    if (crash != null) {
+                        item {
+                            GlassCard {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 9.dp, vertical = 8.dp),
+                                ) {
+                                    Text(
+                                        text = "上次崩溃记录",
+                                        fontSize = dims.titleSmall,
+                                        color = p.accent,
+                                        maxLines = 1,
+                                    )
+                                    Spacer(Modifier.height(3.dp))
+                                    Text(
+                                        text = crash.take(700),
+                                        fontSize = dims.label,
+                                        color = p.muted,
+                                        maxLines = 16,
+                                    )
+                                    Spacer(Modifier.height(6.dp))
+                                    Pill(
+                                        text = "清除记录",
+                                        compact = true,
+                                        onClick = {
+                                            app.clearCrash()
+                                            crashText = null
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     item {
                         Pill(
                             text = if (resetDone) "已恢复默认" else "恢复默认设置",
