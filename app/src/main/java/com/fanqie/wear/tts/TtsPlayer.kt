@@ -9,6 +9,7 @@ import android.media.AudioTrack
 import android.os.SystemClock
 import android.util.Log
 import com.fanqie.wear.FanqieApp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -25,15 +26,17 @@ import java.util.concurrent.Executors
 import kotlin.math.min
 
 /**
- * 听书引擎：用内置的 [EspeakEngine] 合成 PCM，再用 AudioTrack 播放。
+ * 听书引擎。两条音源：
+ *
+ * - **系统语音**（[SystemTts]）：手表 ROM 自带中文 TTS 时优先用它，音色接近真人，零体积。
+ * - **内置 eSpeak**（[EspeakEngine]）：ROM 没有语音引擎时兜底，完全离线，音色是共振峰合成腔。
  *
  * 三条硬规则：
- * 1. **所有 espeak 调用和 AudioTrack 操作都发生在同一根线程上**（tts-audio）。
- *    espeak 不是线程安全的，AudioTrack 被另一根线程 stop/release 更是经典的 use-after-free 闪退源。
- *    暂停/切块只改一个 volatile 标志位，由音频线程自己收尾。
- * 2. **任何异常都不许冒到协程外面**，否则会走 Thread 默认崩溃处理，表现就是"闪退"。
- * 3. **按段落块合成**（约 300 字一块），不是逐句。逐句合成每句都从零起调，
- *    听感是每个分句都重新开口、顿挫很重；整块合成让 espeak 自己在句子间处理停顿和语调。
+ * 1. 内置引擎的 espeak 与 AudioTrack 全部跑在 `tts-audio` 单线程上（espeak 非线程安全，
+ *    AudioTrack 跨线程 stop/release 会 use-after-free）。
+ * 2. 任何异常都不许冒到协程外面，否则走 Thread 默认崩溃处理。
+ * 3. 暂停要记住**句内位置**：eSpeak 路径按采样偏移续播，续听接着刚才那句往下读，
+ *    不会整块从头再来。
  */
 class TtsPlayer(private val context: Context) {
 
@@ -48,6 +51,8 @@ class TtsPlayer(private val context: Context) {
         val speed: Float = 1.0f,
         val pitch: Float = 1.0f,
         val error: String? = null,
+        /** 实际在用的引擎：system / espeak，空串表示还没决定 */
+        val engine: String = "",
     ) {
         val current: String get() = sentences.getOrElse(index) { "" }
         val progress: Float
@@ -71,7 +76,6 @@ class TtsPlayer(private val context: Context) {
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
 
-    /** 单线程：espeak 与 AudioTrack 都只在这根线程上碰 */
     private val audioExecutor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "tts-audio").apply { priority = Thread.NORM_PRIORITY }
     }
@@ -87,13 +91,15 @@ class TtsPlayer(private val context: Context) {
 
     private val scope = CoroutineScope(SupervisorJob() + audioExecutor.asCoroutineDispatcher() + crashGuard)
 
+    private val systemTts = SystemTts(context)
     private var job: Job? = null
 
-    /** 暂停/切块信号：音频线程在每个小片段之间检查 */
     @Volatile private var stopRequested = false
-
-    /** 当前章读完后的下一章 id，load 时由阅读页传入 */
     @Volatile private var nextChapterId: String? = null
+
+    /** 续播位置：暂停时记住"第几块 + 块内第几个采样" */
+    @Volatile private var resumeChunk = -1
+    @Volatile private var resumeSample = 0
 
     init {
         TtsLog.init(context)
@@ -104,12 +110,21 @@ class TtsPlayer(private val context: Context) {
                     ready = ok,
                     error = if (ok) null else "内置语音引擎初始化失败",
                 )
-                TtsLog.i("player", "启动预热完成 ready=$ok")
+                TtsLog.i("player", "启动预热完成 espeakReady=$ok")
             }.onFailure { TtsLog.e("player-init", it) }
+        }
+        // 系统语音有就顺手探一下，供设置页显示
+        scope.launch {
+            runCatching { systemTts.ensureReady() }.onSuccess {
+                TtsLog.i("player", "系统中文语音可用=$it")
+            }
         }
     }
 
     val engineReady: Boolean get() = _state.value.ready
+
+    /** 系统中文语音是否可用（未初始化完时返回 false） */
+    val systemVoiceAvailable: Boolean get() = systemTts.isChineseAvailable
 
     /** 引擎异常后手动重来一次；参数保留兼容旧调用 */
     fun refresh(enginePackage: String? = null) {
@@ -131,7 +146,7 @@ class TtsPlayer(private val context: Context) {
 
     /**
      * 载入一章。nextId 用于读完自动接下一章。
-     * 文本按段落合并成约 300 字一块，而不是逐句合成——逐句会让每句话都重新起调。
+     * eSpeak 路径的续播是采样级的，块可以大一些（顿挫更少）；系统语音每块短一点，暂停粒度更细。
      */
     fun load(
         bookId: String,
@@ -140,9 +155,11 @@ class TtsPlayer(private val context: Context) {
         text: String,
         nextId: String? = null,
     ) {
-        val chunks = splitChunks(text)
+        val chunks = splitChunks(text, if (useSystemVoice()) 90 else 220)
         TtsLog.i("load", "《$title》切成 ${chunks.size} 块")
         nextChapterId = nextId
+        resumeChunk = -1
+        resumeSample = 0
         _state.value = State(
             ready = _state.value.ready,
             playing = false,
@@ -154,6 +171,7 @@ class TtsPlayer(private val context: Context) {
             speed = _state.value.speed,
             pitch = _state.value.pitch,
             error = _state.value.error,
+            engine = _state.value.engine,
         )
     }
 
@@ -168,7 +186,6 @@ class TtsPlayer(private val context: Context) {
             return
         }
 
-        // 不少 Wear OS 表根本没扬声器，这种情况先说清楚，免得以为是引擎坏了
         if (!hasAnyOutput()) {
             _state.value = s.copy(
                 playing = false,
@@ -179,12 +196,39 @@ class TtsPlayer(private val context: Context) {
 
         stopRequested = false
         _state.value = s.copy(playing = true, error = null)
-        TtsLog.i("play", "从第 ${s.index} 块开始，共 ${s.sentences.size} 块")
+        TtsLog.i("play", "从第 ${s.index} 块、块内 ${resumeSample} 采样继续，共 ${s.sentences.size} 块")
         job?.cancel()
         job = scope.launch {
             try {
+                val engine = decideEngine()
+                _state.value = _state.value.copy(engine = engine)
+
+                if (engine == ENGINE_SYSTEM) {
+                    // 系统语音不动 eSpeak，直接开跑
+                    TtsService.start(context, _state.value.title)
+                    var spoke = playAll(ENGINE_SYSTEM)
+                    if (!spoke && !stopRequested) {
+                        // 系统引擎在有些 ROM 上装了但不出声，静默回退到内置引擎，别让用户听空气
+                        TtsLog.w("play", "系统语音没出声，回退内置引擎")
+                        runCatching { systemTts.stop() }
+                        if (EspeakEngine.ensureReady(context)) {
+                            _state.value = _state.value.copy(engine = ENGINE_ESPEAK, ready = true)
+                            resumeChunk = _state.value.index
+                            resumeSample = 0
+                            spoke = playAll(ENGINE_ESPEAK)
+                        }
+                    }
+                    if (!spoke && !stopRequested) {
+                        _state.value = _state.value.copy(
+                            playing = false,
+                            error = "两个引擎都没出声，去「关于与支持 → 听书自检」看看",
+                        )
+                    }
+                    return@launch
+                }
+
                 if (!EspeakEngine.ensureReady(context)) {
-                    TtsLog.w("play", "引擎未就绪")
+                    TtsLog.w("play", "内置引擎未就绪")
                     _state.value = _state.value.copy(
                         ready = false,
                         playing = false,
@@ -195,13 +239,15 @@ class TtsPlayer(private val context: Context) {
                 }
                 _state.value = _state.value.copy(ready = true)
                 TtsService.start(context, _state.value.title)
-                val spoke = playAll()
+                val spoke = playAll(ENGINE_ESPEAK)
                 if (!spoke && !stopRequested) {
                     _state.value = _state.value.copy(
                         playing = false,
                         error = "合成失败：拿到的是空音频，点「自检」看具体卡在哪一步",
                     )
                 }
+            } catch (c: CancellationException) {
+                TtsLog.i("play", "播放协程被取消")
             } catch (t: Throwable) {
                 TtsLog.e("play", t)
                 _state.value = _state.value.copy(
@@ -229,11 +275,14 @@ class TtsPlayer(private val context: Context) {
     }.getOrDefault(true)
 
     fun pause() {
+        // 记下当前位置：暂停后接着读，而不是从这一块的开头重来
+        resumeChunk = _state.value.index
         stopRequested = true
         job?.cancel()
         job = null
+        runCatching { systemTts.stop() }
         _state.value = _state.value.copy(playing = false)
-        TtsLog.i("pause", "第 ${_state.value.index} 块")
+        TtsLog.i("pause", "第 ${_state.value.index} 块，块内 ${resumeSample} 采样")
         TtsService.stop(context)
     }
 
@@ -266,9 +315,12 @@ class TtsPlayer(private val context: Context) {
     }
 
     fun stop() {
+        resumeChunk = -1
+        resumeSample = 0
         stopRequested = true
         job?.cancel()
         job = null
+        runCatching { systemTts.stop() }
         _state.value = _state.value.copy(playing = false, index = 0)
         TtsService.stop(context)
     }
@@ -278,6 +330,7 @@ class TtsPlayer(private val context: Context) {
         stopRequested = true
         job?.cancel()
         job = null
+        runCatching { systemTts.shutdown() }
         runCatching { audioExecutor.shutdown() }
     }
 
@@ -285,6 +338,8 @@ class TtsPlayer(private val context: Context) {
 
     private fun jumpTo(index: Int) {
         val s = _state.value
+        resumeChunk = -1
+        resumeSample = 0
         _state.value = s.copy(index = index)
         if (!s.playing) return
         stopRequested = true
@@ -292,8 +347,12 @@ class TtsPlayer(private val context: Context) {
         stopRequested = false
         job = scope.launch {
             try {
-                if (!EspeakEngine.ensureReady(context)) return@launch
-                playAll()
+                val engine = decideEngine()
+                _state.value = _state.value.copy(engine = engine)
+                if (engine == ENGINE_ESPEAK && !EspeakEngine.ensureReady(context)) return@launch
+                playAll(engine)
+            } catch (c: CancellationException) {
+                // 正常打断
             } catch (t: Throwable) {
                 TtsLog.e("jumpTo", t)
                 _state.value = _state.value.copy(playing = false, error = "播放异常：" + t.message)
@@ -305,17 +364,17 @@ class TtsPlayer(private val context: Context) {
     internal suspend fun playBlocking(): Boolean = runCatching {
         if (!EspeakEngine.ensureReady(context)) return false
         stopRequested = false
-        playAll()
+        playAll(ENGINE_ESPEAK)
     }.getOrElse { TtsLog.e("playBlocking", it); false }
 
     /**
      * 播放当前章；读完视设置决定是否自动接下一章。
-     * 返回是否至少播出过一块音频。
+     * 返回是否至少播出过一块。
      */
-    private suspend fun playAll(): Boolean {
+    private suspend fun playAll(engine: String): Boolean {
         var spokeAny = false
         while (currentCoroutineContext().isActive && !stopRequested) {
-            val spoke = playChunks(_state.value.index)
+            val spoke = playChunks(_state.value.index, engine)
             spokeAny = spokeAny || spoke
             if (stopRequested || !currentCoroutineContext().isActive) break
 
@@ -337,19 +396,21 @@ class TtsPlayer(private val context: Context) {
                 break
             }
             load(_state.value.bookId, next.chapterId, next.title, next.text, next.nextId)
-            _state.value = _state.value.copy(playing = true)
+            _state.value = _state.value.copy(playing = true, engine = engine)
             TtsLog.i("autoNext", "已切到《${next.title}》")
         }
 
         if (!stopRequested) {
+            resumeChunk = -1
+            resumeSample = 0
             _state.value = _state.value.copy(playing = false)
             TtsService.stop(context)
         }
         return spokeAny
     }
 
-    /** 逐块合成 + 播放；返回是否至少播完一块 */
-    private suspend fun playChunks(start: Int): Boolean {
+    /** 逐块朗读；返回是否至少读完一块 */
+    private suspend fun playChunks(start: Int, engine: String): Boolean {
         var i = start
         var spoke = false
         var failedRun = 0
@@ -357,16 +418,25 @@ class TtsPlayer(private val context: Context) {
             val s = _state.value
             val text = s.sentences.getOrNull(i) ?: break
             if (text.isBlank()) { i++; continue }
+
+            // 续播：同一块且记住了块内位置，就从那里接着读
+            val offset = if (i == resumeChunk && resumeSample > 0) resumeSample else 0
             _state.value = s.copy(index = i, playing = true)
 
-            val pcm = EspeakEngine.synth(text, wpmOf(s.speed), pitchOf(s.pitch))
-            if (pcm == null || pcm.isEmpty()) {
+            val ok = if (engine == ENGINE_SYSTEM) {
+                speakWithSystem(text, s.speed, s.pitch)
+            } else {
+                speakWithEspeak(text, s.speed, s.pitch, offset)
+            }
+
+            if (!ok) {
+                if (stopRequested || !currentCoroutineContext().isActive) return spoke
                 failedRun++
-                TtsLog.w("synth", "第 $i 块为空（连续 $failedRun）")
+                TtsLog.w(engine, "第 $i 块没出声（连续 $failedRun）")
                 if (failedRun >= 3) {
                     _state.value = _state.value.copy(
                         playing = false,
-                        error = "连续 3 块合成失败，语音数据可能没解压完整，点「自检」看看",
+                        error = "连续 3 块没出声，点「自检」看看引擎状态",
                     )
                     break
                 }
@@ -374,26 +444,32 @@ class TtsPlayer(private val context: Context) {
                 continue
             }
             failedRun = 0
-            if (!playPcm(pcm)) {
-                TtsLog.i("play", "第 $i 块被打断")
-                return spoke
-            }
+            resumeChunk = -1
+            resumeSample = 0
             spoke = true
             i++
         }
         return spoke
     }
 
+    private suspend fun speakWithSystem(text: String, speed: Float, pitch: Float): Boolean =
+        runCatching { systemTts.speak(text, speed, pitch) }
+            .onFailure { if (it !is CancellationException) TtsLog.e("sysTts", it) }
+            .getOrDefault(false)
+
+    private suspend fun speakWithEspeak(text: String, speed: Float, pitch: Float, offset: Int): Boolean {
+        val pcm = EspeakEngine.synth(text, wpmOf(speed), pitchOf(pitch))
+        if (pcm == null || pcm.isEmpty()) return false
+        val from = offset.coerceIn(0, maxOf(pcm.size - 1, 0))
+        if (from >= pcm.size - 800) return true // 已经播到尾巴，直接换下一块
+        return playPcm(pcm, from)
+    }
+
     /**
-     * 写一块 PCM 到 AudioTrack，返回 false 表示被打断。
-     *
-     * 只在音频线程上调用；分小块写，块与块之间检查停止标志，
-     * 这样暂停响应在 100ms 以内，也不会出现"另一根线程去 stop 正在写的 track"。
-     *
-     * 结尾的排空只补"还没播完的那部分"：阻塞写本身按实时速度推进，
-     * 写完再等一整块时长，会让每块之间空出等长的静音——听起来就是"读完一段就没声了"。
+     * 写一块 PCM 到 AudioTrack；返回 false 表示被打断或失败。
+     * 被打断时把"已经播到第几个采样"记到 [resumeSample]，下次从这里续。
      */
-    private suspend fun playPcm(pcm: ShortArray): Boolean {
+    private suspend fun playPcm(pcm: ShortArray, startSample: Int): Boolean {
         val rate = EspeakEngine.sampleRate.coerceAtLeast(8000)
         val minBuffer = runCatching {
             AudioTrack.getMinBufferSize(
@@ -430,29 +506,36 @@ class TtsPlayer(private val context: Context) {
         }
 
         val started = SystemClock.elapsedRealtime()
+        var offset = startSample
         try {
-            fadeEdges(pcm)
             track.play()
-            var offset = 0
             val chunk = 2048
             while (offset < pcm.size && !stopRequested && currentCoroutineContext().isActive) {
                 val n = min(chunk, pcm.size - offset)
                 val written = track.write(pcm, offset, n)
                 if (written <= 0) {
                     TtsLog.w("write", "写入返回 $written")
+                    saveResume(offset, rate, started)
                     return false
                 }
                 offset += written
             }
-            if (stopRequested || !currentCoroutineContext().isActive) return false
+            if (stopRequested || !currentCoroutineContext().isActive) {
+                saveResume(offset, rate, started)
+                return false
+            }
 
-            // 总时长 - 已经过去的时间 = 还需要等多久
-            val totalMs = pcm.size * 1000L / rate
+            // 只补"还没播完的那部分"：总时长 - 已经过去的时间
+            val totalMs = (pcm.size - startSample) * 1000L / rate
             while (!stopRequested && currentCoroutineContext().isActive) {
                 if (SystemClock.elapsedRealtime() - started >= totalMs) break
                 delay(30)
             }
+            if (stopRequested) saveResume(pcm.size, rate, started)
             return !stopRequested
+        } catch (c: CancellationException) {
+            saveResume(offset, rate, started)
+            throw c
         } catch (t: Throwable) {
             Log.e("TtsPlayer", "播放失败", t)
             TtsLog.e("playPcm", t)
@@ -467,6 +550,14 @@ class TtsPlayer(private val context: Context) {
         }
     }
 
+    /** 估算已经播到第几个采样：写入量受缓冲影响，用"已过去时间"换算更贴近实际听到的位置 */
+    private fun saveResume(writtenSamples: Int, rate: Int, startedAt: Long) {
+        val elapsed = SystemClock.elapsedRealtime() - startedAt
+        val played = (elapsed * rate / 1000L).toInt()
+        resumeSample = played.coerceIn(0, writtenSamples)
+        if (resumeSample < rate / 4) resumeSample = 0 // 不到 0.25 秒就当还没开始
+    }
+
     /** 块首块尾各做一个 6ms 淡入淡出，去掉切块处的"啪"声 */
     private fun fadeEdges(pcm: ShortArray) {
         val ramp = 128
@@ -479,9 +570,31 @@ class TtsPlayer(private val context: Context) {
         }
     }
 
-    private fun autoNextEnabled(): Boolean = runCatching {
-        (context.applicationContext as FanqieApp).settings.value.ttsAutoNext
-    }.getOrDefault(true)
+    // ---------------- 引擎选择 ----------------
+
+    private fun settings(): com.fanqie.wear.data.AppSettings? = runCatching {
+        (context.applicationContext as FanqieApp).settings.value
+    }.getOrNull()
+
+    private fun autoNextEnabled(): Boolean = settings()?.ttsAutoNext ?: true
+
+    /** 当前设置是否倾向系统语音（不代表它一定可用） */
+    private fun useSystemVoice(): Boolean {
+        val pref = settings()?.ttsEngine ?: ENGINE_AUTO
+        return when (pref) {
+            ENGINE_SYSTEM -> true
+            ENGINE_ESPEAK -> false
+            else -> systemTts.isChineseAvailable
+        }
+    }
+
+    /** 真正决定这次用哪个引擎；auto 优先系统语音，不可用就回落到 eSpeak */
+    private suspend fun decideEngine(): String {
+        val pref = settings()?.ttsEngine ?: ENGINE_AUTO
+        if (pref == ENGINE_ESPEAK) return ENGINE_ESPEAK
+        val sysOk = if (systemTts.isInitialized) systemTts.isChineseAvailable else systemTts.ensureReady()
+        return if (sysOk) ENGINE_SYSTEM else ENGINE_ESPEAK
+    }
 
     /** 语速倍率 → eSpeak 的每分钟词数（默认 170，比 175 稍慢，中文更清楚） */
     private fun wpmOf(speed: Float): Int = (170f * speed).toInt().coerceIn(80, 450)
@@ -490,17 +603,15 @@ class TtsPlayer(private val context: Context) {
     private fun pitchOf(pitch: Float): Int = (50f * pitch).toInt().coerceIn(0, 99)
 
     /**
-     * 按段落合并成块，单块目标 300 字左右。
-     * 逐句合成的毛病是每句都重新起调、句间还夹一次 AudioTrack 重建，听感一顿一顿；
-     * 按段落成块后，顿挫交给 espeak 自己处理。
+     * 按段落合并成块。块大一点顿挫少，块小一点暂停粒度细。
+     * 逐句合成的毛病是每句都重新起调、句间还夹一次建轨开销，听感一顿一顿。
      */
-    private fun splitChunks(raw: String): List<String> {
+    private fun splitChunks(raw: String, target: Int): List<String> {
         val cleaned = raw.replace("\r\n", "\n")
-            .replace(Regex("[ \\t\\u3000]+"), " ")
+            .replace(Regex("[ \t\u3000]+"), " ")
             .trim()
         if (cleaned.isEmpty()) return emptyList()
 
-        val target = 300
         val paras = cleaned.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
         val chunks = ArrayList<String>()
         val sb = StringBuilder()
@@ -514,7 +625,6 @@ class TtsPlayer(private val context: Context) {
 
         for (p in paras) {
             if (p.length >= target) {
-                // 超长段落按句号切开，尽量别把一句话劈两半
                 flush()
                 var rest = p
                 while (rest.length > target) {
@@ -531,5 +641,11 @@ class TtsPlayer(private val context: Context) {
         }
         flush()
         return chunks
+    }
+
+    companion object {
+        const val ENGINE_AUTO = "auto"
+        const val ENGINE_SYSTEM = "system"
+        const val ENGINE_ESPEAK = "espeak"
     }
 }

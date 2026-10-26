@@ -252,6 +252,34 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                     item { TtsStatusCard() }
                     item {
                         ChoiceCard(
+                            "朗读引擎",
+                            listOf("自动", "系统语音", "内置 eSpeak"),
+                            when (s.ttsEngine) {
+                                "system" -> 1
+                                "espeak" -> 2
+                                else -> 0
+                            },
+                        ) { v ->
+                            app.settings.update {
+                                it.copy(ttsEngine = listOf("auto", "system", "espeak")[v])
+                            }
+                        }
+                    }
+                    item {
+                        Text(
+                            text = if (app.tts.systemVoiceAvailable) {
+                                "这台手表有中文系统语音，音色接近真人，自动模式会优先用它。"
+                            } else {
+                                "没检测到中文系统语音，自动模式使用内置 eSpeak（离线、机械腔）。" +
+                                    "想让音色自然，需要在手表上装一个中文语音引擎。"
+                            },
+                            fontSize = dims.label,
+                            color = p.muted,
+                            maxLines = 4,
+                        )
+                    }
+                    item {
+                        ChoiceCard(
                             "语速",
                             listOf("0.8x", "1.0x", "1.2x", "1.5x"),
                             when {
@@ -941,9 +969,10 @@ private fun TtsStatusCard() {
             Spacer(Modifier.height(3.dp))
             Text(
                 text = buildString {
-                    append("eSpeak NG ").append(EspeakEngine.version())
-                    append(" · 中文音色\n")
-                    append("引擎和语音数据都打进 APK 了，装完就能听，全程离线，不用再装第三方语音包。")
+                    append(if (ttsState.engine == "system") "系统语音" else "内置 eSpeak NG")
+                    if (ttsState.engine != "system") append(" ").append(EspeakEngine.version())
+                    append(" · 中文\n")
+                    append("引擎随 APK 安装，装完就能听，全程离线。")
                     ttsState.error?.let { append("\n").append(it) }
                 },
                 fontSize = dims.label,

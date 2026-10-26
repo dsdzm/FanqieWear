@@ -167,13 +167,25 @@ object EspeakEngine {
         sb.appendLine("   ✓ 成功")
 
         sb.appendLine("⑤ 合成测试句")
-        val pcm = runCatching { nativeSynth("你好，这是语音自检。", 175, 50) }.getOrNull()
+        val probe = "他今天去学校了，我们一起走吧。"
+        val pcm = runCatching { nativeSynth(probe, 175, 50) }.getOrNull()
         if (pcm == null || pcm.isEmpty()) {
             sb.appendLine("   ✗ 没有拿到音频数据")
             return sb.toString()
         }
         val ms = pcm.size * 1000L / rate
         sb.appendLine("   ✓ ${pcm.size} 个采样 ≈ ${ms}ms")
+
+        // 词典是否生效：按词念会把「今天/学校/我们」连成一段，逐字念则一个字一段
+        val segs = countVoicedSegments(pcm, rate)
+        val chars = probe.count { it in '\u4e00'..'\u9fff' }
+        sb.appendLine(
+            when {
+                segs <= 0 -> "   发声段：检测不到"
+                segs >= chars -> "   发声段 $segs / $chars 字 → 词典可能没生效（逐字念）"
+                else -> "   发声段 $segs / $chars 字 → 按词合成，正常"
+            },
+        )
 
         sb.appendLine("⑥ 播放")
         val played = runCatching {
@@ -194,6 +206,34 @@ object EspeakEngine {
     }
 
     // ---------------- 数据解压 ----------------
+
+    /** 数一下 PCM 里有多少段"有声"，用来自检中文是按词合成还是逐字念 */
+    private fun countVoicedSegments(pcm: ShortArray, rate: Int): Int {
+        val win = (rate * 0.02).toInt().coerceAtLeast(64)
+        if (pcm.size < win * 4) return 0
+        val rms = ArrayList<Double>(pcm.size / win + 1)
+        var i = 0
+        while (i + win <= pcm.size) {
+            var sum = 0.0
+            for (j in i until i + win) {
+                val v = pcm[j].toDouble()
+                sum += v * v
+            }
+            rms.add(kotlin.math.sqrt(sum / win))
+            i += win
+        }
+        val peak = rms.maxOrNull() ?: return 0
+        if (peak <= 0.0) return 0
+        val threshold = peak * 0.05
+        var segments = 0
+        var prevVoiced = false
+        for (v in rms) {
+            val voiced = v > threshold
+            if (voiced && !prevVoiced) segments++
+            prevVoiced = voiced
+        }
+        return segments
+    }
 
     private fun prepareData(context: Context): File {
         val root = File(context.filesDir, "tts")

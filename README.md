@@ -171,7 +171,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 12 / versionName 1.6.4
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 13 / versionName 1.6.5
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -263,6 +263,20 @@ v1.6 起引擎直接编进 APK：
    `ChapterSource` 在读完一章时自己取下一章，正文页面跟着翻；设置 → 语音听书 也补了开关。
 
 另外给块首块尾加了 6ms 淡入淡出（去掉切块处的"啪"声），中文语速基准从 175 降到 170 wpm。
+
+### v1.6.5 双引擎 + 续播定位
+
+eSpeak 的中文是**按词**合成的（实测 15 字出 8 个发声段），逐词短促停顿是共振峰合成的
+固有节奏，调参调不出来——这就是"一个字一个字"的来源。要么换引擎，要么接受。
+
+- **系统语音优先**：新增 `SystemTts`（`android.speech.tts`）。手表 ROM 自带中文语音引擎
+  （讯飞/出门问问等）时音色接近真人，且零体积。设置 → 语音听书 → 朗读引擎：
+  `自动`（有系统语音就用）/ `系统语音` / `内置 eSpeak`。系统引擎不出声时自动回退内置引擎。
+- **续播定位**：以前暂停记住的是"第几块"，续听会把这一整块（约 1 分钟）从头再念一遍。
+  现在 eSpeak 路径按**采样偏移**续播，接着刚才那句往下读；系统语音路径把块切到 90 字，
+  粒度约 20 秒。
+- 自检里加了词典判定：合成一句 15 个字，数发声段。段数≈字数说明词典没生效（逐字念），
+  段数明显更少说明按词合成正常。
 
 
 
