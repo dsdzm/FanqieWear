@@ -50,12 +50,15 @@ import com.fanqie.wear.app
 import com.fanqie.wear.data.FanqieApi
 import com.fanqie.wear.data.Source
 import com.fanqie.wear.tts.EspeakEngine
+import com.fanqie.wear.tts.TtsLog
 import com.fanqie.wear.ui.theme.AccentPacks
 import com.fanqie.wear.ui.theme.LocalPalette
 import com.fanqie.wear.ui.theme.SafeArea
 import com.fanqie.wear.ui.theme.UiScale
 import com.fanqie.wear.ui.theme.rememberDeviceDims
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 val SETTING_TITLES = listOf(
     "阅读外观", "阅读操作", "界面与安全区", "语音听书",
@@ -120,6 +123,16 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
     var checking by remember { mutableStateOf(false) }
     var probeResults by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var crashText by remember { mutableStateOf(app.lastCrash()) }
+    // 听书自检结果 / 落地日志：手表连不了 adb，出问题就看这两块
+    var ttsDiag by remember { mutableStateOf<String?>(null) }
+    var ttsDiagRunning by remember { mutableStateOf(false) }
+    var ttsTrace by remember { mutableStateOf<String?>(null) }
+    val ctx = LocalContext.current
+    val versionName = remember {
+        runCatching {
+            ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName
+        }.getOrNull() ?: "未知"
+    }
 
     ScreenScaffold(
             scrollState = state,
@@ -459,7 +472,7 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                                     fontWeight = FontWeight.SemiBold,
                                     color = p.text,
                                 )
-                                Text("v1.5.0 · minSdk 26", fontSize = dims.label, color = p.muted)
+                                Text("v$versionName · minSdk 26", fontSize = dims.label, color = p.muted)
                                 Spacer(Modifier.height(6.dp))
                                 Text(
                                     text = "数据来自笔趣阁、番茄小说、七猫免费小说的公开页面，仅供个人学习研究。\n" +
@@ -471,6 +484,95 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                             }
                         }
                     }
+                    item {
+                        GlassCard {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 9.dp, vertical = 8.dp),
+                            ) {
+                                Text(
+                                    text = "听书自检",
+                                    fontSize = dims.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = p.text,
+                                    maxLines = 1,
+                                )
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    text = ttsDiag ?: "点一下，依次检查：引擎库 → 语音数据 → 初始化 → 中文音色 → 合成 → 播放。" +
+                                        "结果会写进下面的日志，出问题直接把这段发我。",
+                                    fontSize = dims.label,
+                                    color = p.muted,
+                                    maxLines = 18,
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Pill(
+                                        text = if (ttsDiagRunning) "检查中…" else "开始自检",
+                                        compact = true,
+                                        selected = ttsDiagRunning,
+                                        onClick = {
+                                            if (!ttsDiagRunning) {
+                                                ttsDiagRunning = true
+                                                runCatching { app.tts.pause() }
+                                                scope.launch {
+                                                    val r = runCatching {
+                                                        withContext(Dispatchers.IO) { EspeakEngine.selfTest(ctx) }
+                                                    }.getOrElse { "自检异常：" + (it.message ?: it.javaClass.simpleName) }
+                                                    ttsDiag = r
+                                                    ttsDiagRunning = false
+                                                    ttsTrace = TtsLog.read(ctx)
+                                                }
+                                            }
+                                        },
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Pill(
+                                        text = "刷新日志",
+                                        compact = true,
+                                        onClick = { ttsTrace = TtsLog.read(ctx) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    ttsTrace?.let { trace ->
+                        item {
+                            GlassCard {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 9.dp, vertical = 8.dp),
+                                ) {
+                                    Text(
+                                        text = "听书日志",
+                                        fontSize = dims.titleSmall,
+                                        color = p.accent,
+                                        maxLines = 1,
+                                    )
+                                    Spacer(Modifier.height(3.dp))
+                                    Text(
+                                        text = trace.takeLast(900),
+                                        fontSize = dims.label,
+                                        color = p.muted,
+                                        maxLines = 22,
+                                    )
+                                    Spacer(Modifier.height(6.dp))
+                                    Pill(
+                                        text = "清除日志",
+                                        compact = true,
+                                        onClick = {
+                                            TtsLog.clear(ctx)
+                                            ttsTrace = null
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     val crash = crashText
                     if (crash != null) {
                         item {

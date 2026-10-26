@@ -171,7 +171,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 8 / versionName 1.6.0
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 11 / versionName 1.6.3
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -194,6 +194,24 @@ adb install -r app-debug.apk
 > 换签名后无法覆盖安装旧包（证书不同会报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`），
 > 需要先卸载。卸载会清空本机的书架与进度。
 
+### 双签名产物（每次发版固定）
+
+```bash
+tools/package-release.sh
+```
+
+一次构建出两个包，`dist/` 下：
+
+| 产物 | 证书 | 用途 |
+|---|---|---|
+| `FanqieWear-v<ver>-release.apk` | `CN=Shuge Wear`（`keystore/shuge-release.jks`） | 普通安装 |
+| `FanqieWear-v<ver>-testkey.apk` | AOSP `testkey`（`CN=Android, O=Android`） | 定制系统 / 系统分区 / 需要 testkey 信任链的场景 |
+
+testkey 是 AOSP 的**公开**测试密钥，没有任何保密性可言，只解决"系统只认 testkey"这类兼容问题。
+两包证书不同，**不能互相覆盖安装**，切换前先卸载。脚本发现 `keystore/testkey/` 缺失时会自动从
+AOSP 镜像拉取，仓库里不放任何私钥文件。
+
+
 ## 九、离线下载
 
 书籍详情页 →「下载全本」或「前 50 章」，整本缓存到手表本地（`filesDir/downloads/<bookId>/`），
@@ -209,14 +227,30 @@ v1.6 起引擎直接编进 APK：
 |---|---|---|
 | `libespeak-ng.so` | espeak-ng 1.52.0，NDK 交叉编译，arm64-v8a + armeabi-v7a | 705K / 487K |
 | `libespeakng-jni.so` | JNI 桥，`espeak_Synth` 收 PCM 交给 AudioTrack | 8K |
-| `assets/espeak-ng-data/` | 中文语音数据，从 19MB 裁到只留 cmn + 音素表 + 音色 | 2.6MB |
+| `assets/espeak-ng-data/` | 中文语音数据 + 英文词典，从 19MB 裁到只留 cmn/en + 音素表 + 音色 | 2.8MB |
 
 关键实现：
 
-- `EspeakEngine` 首次使用时把 assets 里的数据解到 `filesDir/tts/`，用版本号文件避免每次启动重解
+- `EspeakEngine` 首次使用时把 assets 里的数据解到 `filesDir/tts/`，用版本号文件避免每次启动重解；
+  解压后逐个校验 `phondata / phonindex / phontab / intonations / cmn_dict`，缺文件直接判失败
 - 合成走 `AUDIO_OUTPUT_SYNCHRONOUS`，回调里攒 PCM，一次返回一句，播放由 App 用 `AudioTrack` 控制
-- 逐句播放，句子边界就是进度点和暂停点；暂停 = 取消协程 + `AudioTrack.stop()` 让阻塞的 write 立刻返回
+- 逐句播放，句子边界就是进度点和暂停点；暂停 = 改标志位，音频线程自己收尾
 - 语速映射到 eSpeak 的 wpm（175 × 倍率，80~450），音调映射到 0~99（50 为基准）
+
+### v1.6.3 修的两处硬伤
+
+1. **`espeak_Initialize` 带 `espeakINITIALIZE_DONT_EXIT`**。espeak 内部初始化失败时默认会调
+   `exit(1)`（`espeak_api.c`），在 App 里等于瞬间杀进程，Java 层的崩溃兜底连堆栈都留不下——
+   表现就是"点了听书没声音、紧接着闪退"。现在传 `DONT_EXIT`，失败只返回负数，转成界面提示。
+2. **音频线程收敛到一根线程**。以前 `pause()` 会从主线程对正在 `write()` 的 `AudioTrack` 调
+   `stop()/release()`，是典型的 use-after-free 闪退源；同时 espeak 也不是线程安全的，初始化在
+   协程池 A 线程、合成在 B 线程也可能踩坏内部状态。现在全部 espeak 调用与 AudioTrack 操作都在
+   `tts-audio` 单线程上，暂停只改一个 `volatile` 标志，写完小片段后自己收尾。
+
+另外补了**英文词典 `en_dict`**（正文里夹英文单词、网址时不再反复报 `Can't read dictionary file`），
+以及**落地日志**：每走一步写一行到 `filesDir/tts-trace.txt`，设置 → 关于里有「听书自检」和「日志」，
+手表连不了 adb 也能自己定位卡在哪一步。
+
 
 代价是音色偏合成腔（eSpeak 的固有水平），好处是**完全离线、零安装、不依赖系统语音包**。
 设置 → 语音听书 里能看到引擎版本与就绪状态，语速音调即时生效。

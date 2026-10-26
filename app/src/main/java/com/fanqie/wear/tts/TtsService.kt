@@ -52,11 +52,13 @@ class TtsService : Service() {
                     0
                 },
             )
+            TtsLog.i("service", "前台服务已启动")
             START_STICKY
         } catch (t: Throwable) {
             // 没有通知权限、前台服务被系统拒绝、渠道被用户关掉……都走这里。
-            // 服务退出即可，播放器还在 Application 里跑，声音不受影响。
-            stopSelf()
+            // 服务退出即可，播放器在 Application 里跑，声音不受影响。
+            TtsLog.e("service", t)
+            runCatching { stopSelf() }
             START_NOT_STICKY
         }
     }
