@@ -171,7 +171,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 13 / versionName 1.6.5
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 14 / versionName 1.6.6
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -277,6 +277,22 @@ eSpeak 的中文是**按词**合成的（实测 15 字出 8 个发声段），�
   粒度约 20 秒。
 - 自检里加了词典判定：合成一句 15 个字，数发声段。段数≈字数说明词典没生效（逐字念），
   段数明显更少说明按词合成正常。
+
+### v1.6.6 内置音色可切换
+
+eSpeak 自带 104 个共振峰变体，实测同一句话基频差异明显：
+
+| 音色 | voice spec | 基频 | 时长 |
+|---|---|---|---|
+| 标准男声 | `cmn` | ~120Hz | 3.6s |
+| 低沉男声 | `cmn+m3` | 99Hz | 3.6s |
+| 沉稳男声 | `cmn+m7` | 100Hz | 3.6s |
+| 女声 | `cmn+f3` | 199Hz | 3.6s |
+| 轻快女声 | `cmn+f1` | 172Hz | 3.6s |
+| 低语 | `cmn+whisper` | 无基频 | 3.6s |
+
+变体只改共振峰与基频，不改发音规则，所以吐字方式不变、只是音色不同。
+入口：设置 → 语音听书 → 内置音色，附带「试听这个音色」。
 
 
 

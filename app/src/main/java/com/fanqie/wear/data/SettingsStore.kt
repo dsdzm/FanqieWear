@@ -61,6 +61,8 @@ data class AppSettings(
     val ttsAutoNext: Boolean = true,
     /** 朗读引擎：auto 有系统中文语音就用系统，否则内置 eSpeak；system 只用系统；espeak 只用内置 */
     val ttsEngine: String = "auto",
+    /** 内置引擎音色：eSpeak voice spec，如 cmn / cmn+f3 / cmn+m3 */
+    val ttsVoice: String = "cmn",
 
     /** 滚动/点击震动反馈 */
     val haptics: Boolean = true,
@@ -104,6 +106,7 @@ class SettingsStore(context: Context) {
         ttsPitch = sp.getFloat("ttsPitch", 1.0f),
         ttsAutoNext = sp.getBoolean("ttsAutoNext", true),
         ttsEngine = sp.getString("ttsEngine", "auto") ?: "auto",
+        ttsVoice = sp.getString("ttsVoice", "cmn") ?: "cmn",
         haptics = sp.getBoolean("haptics", true),
         edgeBack = sp.getBoolean("edgeBack", true),
     )
@@ -138,6 +141,7 @@ class SettingsStore(context: Context) {
             .putFloat("ttsPitch", n.ttsPitch)
             .putBoolean("ttsAutoNext", n.ttsAutoNext)
             .putString("ttsEngine", n.ttsEngine)
+            .putString("ttsVoice", n.ttsVoice)
             .putBoolean("haptics", n.haptics)
             .putBoolean("edgeBack", n.edgeBack)
             .apply()

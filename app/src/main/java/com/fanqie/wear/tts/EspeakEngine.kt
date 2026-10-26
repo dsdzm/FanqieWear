@@ -31,6 +31,42 @@ object EspeakEngine {
     @Volatile private var sampleRateHz = 22050
     @Volatile private var versionText = "eSpeak NG 1.52"
 
+    /**
+     * 当前音色。eSpeak 支持 "基音色+变体" 的写法，例如 cmn+f3 是女声、cmn+m3 是低沉男声。
+     * 变体只改共振峰与基频，不改发音，所以词典和吐字逻辑完全一样。
+     */
+    @Volatile private var currentVoice = "cmn"
+
+    /** 内置可选音色：显示名 → eSpeak voice spec */
+    val VOICES: List<Pair<String, String>> = listOf(
+        "标准男声" to "cmn",
+        "低沉男声" to "cmn+m3",
+        "沉稳男声" to "cmn+m7",
+        "女声" to "cmn+f3",
+        "轻快女声" to "cmn+f1",
+        "低语" to "cmn+whisper",
+    )
+
+    /** 切换音色；引擎已就绪时立刻生效，否则等下次初始化 */
+    fun setVoice(spec: String): Boolean {
+        val target = spec.ifBlank { "cmn" }
+        if (!engineReady) {
+            currentVoice = target
+            return true
+        }
+        if (target == currentVoice) return true
+        val ok = runCatching { nativeSetVoice(target) == 0 }.getOrDefault(false)
+        if (ok) {
+            currentVoice = target
+            TtsLog.i("voice", "切换音色 $target")
+        } else {
+            TtsLog.w("voice", "音色 $target 不可用，保持 $currentVoice")
+        }
+        return ok
+    }
+
+    fun currentVoiceSpec(): String = currentVoice
+
     external fun nativeInit(dataParent: String): Int
     external fun nativeSetVoice(name: String): Int
     external fun nativeSynth(text: String, rate: Int, pitch: Int): ShortArray?
@@ -93,7 +129,11 @@ object EspeakEngine {
         TtsLog.i("init", "采样率 $rate")
 
         // 1.52 的中文音色名是 cmn，个别构建里叫 zh
-        var voiceCode = nativeSetVoice("cmn")
+        var voiceCode = nativeSetVoice(currentVoice)
+        if (voiceCode != 0 && currentVoice != "cmn") {
+            currentVoice = "cmn"
+            voiceCode = nativeSetVoice("cmn")
+        }
         if (voiceCode != 0) voiceCode = nativeSetVoice("zh")
         if (voiceCode != 0) {
             // 音色都没设上，合成必然失败（还可能让引擎在默认音色上撞缺失词典），直接判失败
@@ -102,7 +142,7 @@ object EspeakEngine {
             runCatching { nativeRelease() }
             return false
         }
-        TtsLog.i("voice", "中文音色就绪")
+        TtsLog.i("voice", "中文音色就绪：$currentVoice")
 
         versionText = runCatching { "eSpeak NG " + nativeVersion() }.getOrDefault("eSpeak NG")
         engineReady = true

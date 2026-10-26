@@ -105,6 +105,8 @@ class TtsPlayer(private val context: Context) {
         TtsLog.init(context)
         scope.launch {
             runCatching {
+                // 先记住设置的音色，ensureReady 里会用它初始化
+                EspeakEngine.setVoice(settings()?.ttsVoice ?: "cmn")
                 val ok = EspeakEngine.ensureReady(context)
                 _state.value = _state.value.copy(
                     ready = ok,
@@ -458,6 +460,8 @@ class TtsPlayer(private val context: Context) {
             .getOrDefault(false)
 
     private suspend fun speakWithEspeak(text: String, speed: Float, pitch: Float, offset: Int): Boolean {
+        // 音色在设置里可切，切了要立刻生效；setVoice 内部会判重，不会每次都重载
+        runCatching { EspeakEngine.setVoice(settings()?.ttsVoice ?: "cmn") }
         val pcm = EspeakEngine.synth(text, wpmOf(speed), pitchOf(pitch))
         if (pcm == null || pcm.isEmpty()) return false
         val from = offset.coerceIn(0, maxOf(pcm.size - 1, 0))

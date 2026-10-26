@@ -279,6 +279,42 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                         )
                     }
                     item {
+                        val voices = EspeakEngine.VOICES
+                        ChoiceCard(
+                            "内置音色",
+                            voices.map { it.first },
+                            voices.indexOfFirst { it.second == s.ttsVoice }.coerceAtLeast(0),
+                        ) { v ->
+                            app.settings.update { it.copy(ttsVoice = voices[v].second, ttsEngine = "espeak") }
+                        }
+                    }
+                    item {
+                        Pill(
+                            text = "试听这个音色",
+                            selected = true,
+                            compact = true,
+                            onClick = {
+                                val spec = s.ttsVoice
+                                val st = app.settings.value
+                                runCatching { EspeakEngine.setVoice(spec) }
+                                val t = app.tts
+                                t.load("demo", "demo", "音色试听", "他今天去学校了，我们一起走吧。这是当前音色。")
+                                t.setSpeed(st.ttsSpeed)
+                                t.setPitch(st.ttsPitch)
+                                t.play()
+                            },
+                        )
+                    }
+                    item {
+                        Text(
+                            text = "内置音色只对 eSpeak 有效：低沉/女声/低语走的是不同共振峰变体，" +
+                                "吐字方式不变，只是音色不同。",
+                            fontSize = dims.label,
+                            color = p.muted,
+                            maxLines = 3,
+                        )
+                    }
+                    item {
                         ChoiceCard(
                             "语速",
                             listOf("0.8x", "1.0x", "1.2x", "1.5x"),
