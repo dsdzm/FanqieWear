@@ -171,7 +171,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 11 / versionName 1.6.3
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 12 / versionName 1.6.4
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -250,6 +250,20 @@ v1.6 起引擎直接编进 APK：
 另外补了**英文词典 `en_dict`**（正文里夹英文单词、网址时不再反复报 `Can't read dictionary file`），
 以及**落地日志**：每走一步写一行到 `filesDir/tts-trace.txt`，设置 → 关于里有「听书自检」和「日志」，
 手表连不了 adb 也能自己定位卡在哪一步。
+
+### v1.6.4 修的三处听感问题
+
+1. **逐句合成 → 按段落块合成（约 300 字一块）**。旧实现每句一次 `espeak_Synth`、一次
+   `AudioTrack` 创建销毁，每句话都从零起调，句间还夹一次建轨开销，听感一顿一顿、吐字发飘。
+   整块交给 espeak 后，句子之间的停顿和语调由它自己处理，连贯性接近正常朗读。
+2. **排空等待算错，凭空多出等长静音**。旧代码写完 PCM 之后又等了一整块时长，
+   而阻塞式 `write` 本身已经按实时速度推进 —— 于是每块之后空出和正文一样长的静音，
+   听起来正是"读完一段就没声音了"。现在只补足 `总时长 − 已过去时间`。
+3. **自动续章**。`ttsAutoNext` 以前只有存储字段，没有任何地方读它。现在播放器通过
+   `ChapterSource` 在读完一章时自己取下一章，正文页面跟着翻；设置 → 语音听书 也补了开关。
+
+另外给块首块尾加了 6ms 淡入淡出（去掉切块处的"啪"声），中文语速基准从 175 降到 170 wpm。
+
 
 
 代价是音色偏合成腔（eSpeak 的固有水平），好处是**完全离线、零安装、不依赖系统语音包**。

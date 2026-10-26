@@ -58,6 +58,7 @@ import com.fanqie.wear.app
 import com.fanqie.wear.data.FanqieApi
 import com.fanqie.wear.data.Progress
 import com.fanqie.wear.data.Source
+import com.fanqie.wear.tts.TtsPlayer
 import com.fanqie.wear.ui.theme.LocalDisplayConfig
 import com.fanqie.wear.ui.theme.LocalPalette
 import com.fanqie.wear.ui.theme.rememberDeviceDims
@@ -110,6 +111,26 @@ fun ReaderScreen(
 
     val ttsState by app.tts.state.collectAsStateWithLifecycle()
     val onThisChapter = ttsState.chapterId == currentId
+
+    // 听书：把"下一章怎么取"交给播放器，读完一章自动接下一章
+    DisposableEffect(source, bookId) {
+        val api = app.sources.of(source)
+        app.tts.chapterSource = object : TtsPlayer.ChapterSource {
+            override suspend fun fetch(chapterId: String): TtsPlayer.Fetched? = runCatching {
+                val r = api.chapter(bookId, chapterId)
+                TtsPlayer.Fetched(chapterId, r.title, r.content, r.nextId)
+            }.getOrNull()
+        }
+        onDispose { app.tts.chapterSource = null }
+    }
+
+    // 播放器自动续章后，正文跟着翻；只在播放中跟随，避免覆盖用户手动翻章
+    LaunchedEffect(ttsState.chapterId, ttsState.playing) {
+        val cid = ttsState.chapterId
+        if (ttsState.playing && cid.isNotBlank() && cid != currentId) {
+            currentId = cid
+        }
+    }
 
     val bg = READER_BG.getOrElse(settings.readerBg) { Color.Black }
     val darkBg = settings.readerBg in listOf(0, 3, 4)
@@ -518,7 +539,7 @@ fun ReaderScreen(
                         if (onThisChapter) {
                             if (ttsState.playing) app.tts.pause() else app.tts.play()
                         } else if (content.isNotBlank()) {
-                            app.tts.load(bookId, currentId, title, content)
+                            app.tts.load(bookId, currentId, title, content, nextId)
                             app.tts.setSpeed(settings.ttsSpeed)
                             app.tts.setPitch(settings.ttsPitch)
                             app.tts.play()

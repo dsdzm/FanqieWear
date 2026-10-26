@@ -278,6 +278,11 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                         }
                     }
                     item {
+                        SwitchCard("自动续播", "一章读完自动接下一章", s.ttsAutoNext) {
+                            app.settings.update { it.copy(ttsAutoNext = it.ttsAutoNext.not()) }
+                        }
+                    }
+                    item {
                         GlassCard {
                             Column(modifier = Modifier.padding(10.dp)) {
                                 Text("朗读测试", fontSize = dims.label, color = p.muted)
