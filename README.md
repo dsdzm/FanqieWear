@@ -171,7 +171,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 18 / versionName 2.2.0
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 19 / versionName 2.3.0
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -372,3 +372,13 @@ eSpeak 自带 104 个共振峰变体，实测同一句话基频差异明显：
 - **悬浮听书键**：跟随沉浸模式一起收起；主键 38→48dp，齿轮 18→34dp（原来点不到）。
 - **阅读历史**：补 `bookTitle` 字段，标题显示书名、副标题显示章节名 + 时间；
   旧记录没有书名的回退查书架。
+
+## 2.3.0：在线语音换成百度接口
+
+微软给 Edge「大声朗读」加了 `Sec-MS-GEC` 的 DRM 签名（自定义 CS64 + 改过常量的 SHA-256），
+不带令牌一律 403。复刻那套签名既容易写错也挡不住再改，所以换成百度翻译的朗读接口：
+
+- `GET https://fanyi.baidu.com/gettts?lan=zh&spd=5&source=web&text=...`，免 key、免签名，直接回 mp3
+- 实测：150 字 → 302KB / 1.0s，300 字 → 604KB / 1.8s，连续请求不被限流
+- 仍然走原来的缓存与播放链路（mp3 落盘、MediaPlayer 毫秒续播）
+- 在线失败自动回退内置 eSpeak，不再让你干等

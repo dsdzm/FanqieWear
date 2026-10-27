@@ -268,21 +268,11 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                     }
                     item {
                         Text(
-                            text = if (app.tts.systemVoiceAvailable) "有系统语音，自动模式优先用它" else "无系统语音，自动模式用内置引擎",
+                            text = if (app.tts.systemVoiceAvailable) "有系统语音，自动优先用它" else "自动：在线 → 内置",
                             fontSize = dims.label,
                             color = p.muted,
                             maxLines = 1,
                         )
-                    }
-                    item {
-                        val onlineVoices = com.fanqie.wear.tts.EdgeTtsEngine.VOICE_LIST
-                        ChoiceCard(
-                            "在线音色",
-                            onlineVoices.map { it.first },
-                            onlineVoices.indexOfFirst { it.second == s.ttsOnlineVoice }.coerceAtLeast(0),
-                        ) { v ->
-                            app.settings.update { it.copy(ttsOnlineVoice = onlineVoices[v].second, ttsEngine = "online") }
-                        }
                     }
                     item {
                         val cache = remember { com.fanqie.wear.tts.TtsCache(ctx) }

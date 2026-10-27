@@ -93,7 +93,7 @@ class TtsPlayer(private val context: Context) {
 
     private val systemTts = SystemTts(context)
     private val ttsCache = TtsCache(context)
-    private val edgeTts = EdgeTtsEngine(context, ttsCache)
+    private val onlineTts = OnlineTtsEngine(context, ttsCache)
     private val audioFile = AudioFilePlayer(context)
     private var job: Job? = null
 
@@ -159,7 +159,14 @@ class TtsPlayer(private val context: Context) {
         prevId: String? = null,
         sourceKey: String = "",
     ) {
-        val chunks = splitChunks(text, if (useSystemVoice()) 90 else 220)
+        val chunks = splitChunks(
+            text,
+            when {
+                useSystemVoice() -> 90
+                (settings()?.ttsEngine ?: ENGINE_AUTO) == ENGINE_ONLINE -> 180
+                else -> 220
+            },
+        )
         TtsLog.i("load", "《$title》切成 ${chunks.size} 块")
         nextChapterId = nextId
         prevChapterId = prevId
@@ -228,6 +235,29 @@ class TtsPlayer(private val context: Context) {
                         _state.value = _state.value.copy(
                             playing = false,
                             error = "两个引擎都没出声，去「关于与支持 → 听书自检」看看",
+                        )
+                    }
+                    return@launch
+                }
+
+                if (engine == ENGINE_ONLINE) {
+                    TtsService.start(context, _state.value.title)
+                    var spoke = playAll(ENGINE_ONLINE)
+                    if (!spoke && !stopRequested) {
+                        // 在线接口不通（无网/被限流）时静默回退，别让用户干等
+                        TtsLog.w("play", "在线合成失败，回退内置引擎")
+                        if (EspeakEngine.ensureReady(context)) {
+                            _state.value = _state.value.copy(engine = ENGINE_ESPEAK, ready = true)
+                            resumeChunk = _state.value.index
+                            resumeSample = 0
+                            resumeMs = 0
+                            spoke = playAll(ENGINE_ESPEAK)
+                        }
+                    }
+                    if (!spoke && !stopRequested) {
+                        _state.value = _state.value.copy(
+                            playing = false,
+                            error = "在线语音和内置引擎都没出声，看「听书日志」",
                         )
                     }
                     return@launch
@@ -511,12 +541,11 @@ class TtsPlayer(private val context: Context) {
 
     /** 在线语音：缓存优先，没缓存就合成；合成失败返回 false 由上层回退 */
     private suspend fun speakWithOnline(text: String, speed: Float, pitch: Float, startMs: Int): Boolean {
-        val voice = settings()?.ttsOnlineVoice ?: "zh-CN-XiaoxiaoNeural"
         val ratePercent = ((speed - 1f) * 100).toInt().coerceIn(-40, 80)
-        val file = ttsCache.find(text, voice, ratePercent)
-            ?: edgeTts.synthesize(text, voice, ratePercent)
+        val file = onlineTts.cached(text, ratePercent)
+            ?: onlineTts.synthesize(text, ratePercent)
             ?: run {
-                TtsLog.w("online", "合成失败：${edgeTts.errorText ?: "无网络"}")
+                TtsLog.w("online", "合成失败：${onlineTts.errorText ?: "无网络"}")
                 return false
             }
         return audioFile.play(file, startMs) { resumeMs = it } >= 0
