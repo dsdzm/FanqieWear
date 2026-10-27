@@ -268,15 +268,10 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                     }
                     item {
                         Text(
-                            text = if (app.tts.systemVoiceAvailable) {
-                                "这台手表有中文系统语音，音色接近真人，自动模式会优先用它。"
-                            } else {
-                                "没检测到中文系统语音，自动模式使用内置 eSpeak（离线、机械腔）。" +
-                                    "想让音色自然，需要在手表上装一个中文语音引擎。"
-                            },
+                            text = if (app.tts.systemVoiceAvailable) "有系统语音，自动模式优先用它" else "无系统语音，自动模式用内置引擎",
                             fontSize = dims.label,
                             color = p.muted,
-                            maxLines = 4,
+                            maxLines = 1,
                         )
                     }
                     item {
@@ -296,10 +291,10 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                             Column(modifier = Modifier.padding(10.dp)) {
                                 Text("听书缓存", fontSize = dims.label, color = p.muted)
                                 Text(
-                                    "已缓存 %.1f MB · 断网也能重听已读过的章节".format(sizeMb),
+                                    "%.1f MB".format(sizeMb),
                                     fontSize = dims.label,
                                     color = p.text,
-                                    maxLines = 2,
+                                    maxLines = 1,
                                 )
                                 Spacer(Modifier.height(6.dp))
                                 Pill(text = "清空缓存", compact = true, onClick = {
@@ -338,11 +333,10 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                     }
                     item {
                         Text(
-                            text = "内置音色只对 eSpeak 有效：低沉/女声/低语走的是不同共振峰变体，" +
-                                "吐字方式不变，只是音色不同。",
+                            text = "只改音色，不改吐字",
                             fontSize = dims.label,
                             color = p.muted,
-                            maxLines = 3,
+                            maxLines = 1,
                         )
                     }
                     item {
@@ -547,11 +541,10 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
 
                     item {
                         Text(
-                            text = "番茄的登录走字节 Passport，签名在手表端跑不通，正文第 11 章起只有试读，" +
-                                "所以默认换成免登录的笔趣阁；番茄源保留在这里，以后登录修好了可以随时切回来。",
+                            text = "番茄未登录只有前 10 章",
                             fontSize = dims.label,
                             color = p.muted,
-                            maxLines = 6,
+                            maxLines = 1,
                         )
                     }
                 }
@@ -1051,15 +1044,12 @@ private fun TtsStatusCard() {
             Spacer(Modifier.height(3.dp))
             Text(
                 text = buildString {
-                    append(if (ttsState.engine == "system") "系统语音" else "内置 eSpeak NG")
-                    if (ttsState.engine != "system") append(" ").append(EspeakEngine.version())
-                    append(" · 中文\n")
-                    append("引擎随 APK 安装，装完就能听，全程离线。")
-                    ttsState.error?.let { append("\n").append(it) }
+                    append(if (ttsState.engine == "system") "系统语音" else "内置 eSpeak")
+                    ttsState.error?.takeIf { it.isNotBlank() }?.let { append(" · ").append(it) }
                 },
                 fontSize = dims.label,
                 color = p.muted,
-                maxLines = 6,
+                maxLines = 2,
             )
         }
     }

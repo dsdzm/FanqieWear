@@ -85,14 +85,19 @@ fun HistoryScreen(onBack: () -> Unit, onOpen: (String, String, String, Source) -
                         .padding(horizontal = 10.dp, vertical = 9.dp),
                 ) {
                     Text(
-                        text = p.chapterTitle.ifBlank { p.bookId },
+                        text = p.bookTitle.ifBlank {
+                            app.shelf.all().firstOrNull { it.id == p.bookId }?.title ?: p.bookId
+                        },
                         fontSize = dims.titleSmall,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = "读到第 ${p.chapterIndex + 1} 章 · ${timeText(p.updatedAt)}",
+                        text = listOf(
+                            p.chapterTitle.ifBlank { "读到第 ${p.chapterIndex + 1} 章" },
+                            timeText(p.updatedAt),
+                        ).filter { it.isNotBlank() }.joinToString(" · "),
                         fontSize = dims.label,
                         color = LocalPalette.current.muted,
                         maxLines = 1,

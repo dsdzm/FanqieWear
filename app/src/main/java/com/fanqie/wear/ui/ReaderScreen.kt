@@ -83,6 +83,7 @@ private val CHAR_COLORS = listOf(
 @Composable
 fun ReaderScreen(
     bookId: String,
+    bookTitle: String = "",
     itemId: String,
     source: Source,
     onBack: () -> Unit,
@@ -160,7 +161,7 @@ fun ReaderScreen(
             fromLocal = true
             locked = false
             loading = false
-            app.shelf.saveProgress(Progress(bookId, currentId, local.title, 0, source = source.key))
+            app.shelf.saveProgress(Progress(bookId, bookTitle.ifBlank { local.title }, currentId, local.title, 0, source = source.key))
             return@LaunchedEffect
         }
         fromLocal = false
@@ -179,6 +180,7 @@ fun ReaderScreen(
                 app.shelf.saveProgress(
                     Progress(
                         bookId = if (it.bookId.isNotBlank()) it.bookId else bookId,
+                        bookTitle = bookTitle.ifBlank { title },
                         itemId = it.itemId,
                         chapterTitle = it.title,
                         chapterIndex = 0,
@@ -506,8 +508,9 @@ fun ReaderScreen(
                 }
             }
 
-            // 悬浮听书键：点了直接在正文里开始读，不跳页面；齿轮进听书页
-            TtsFab(
+            // 悬浮听书键：和底部条一起收起，点中央才出现
+            if (chrome) {
+                TtsFab(
                 playing = onThisChapter && ttsState.playing,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -523,7 +526,8 @@ fun ReaderScreen(
                     }
                 },
                 onOpen = onOpenListen,
-            )
+                )
+            }
         }
 
         if (settings.bottomProgress) {
@@ -585,18 +589,18 @@ private fun TtsFab(
     Column(modifier = modifier, horizontalAlignment = Alignment.End) {
         Box(
             modifier = Modifier
-                .size(18.dp)
+                .size(34.dp)
                 .clip(CircleShape)
                 .background(p.cardHigh)
                 .clickable { onOpen() },
             contentAlignment = Alignment.Center,
         ) {
-            Text("⚙", fontSize = 10.sp, color = p.muted)
+            Text("⚙", fontSize = 17.sp, color = p.text)
         }
-        Spacer(Modifier.height(3.dp))
+        Spacer(Modifier.height(6.dp))
         Box(
             modifier = Modifier
-                .size(38.dp)
+                .size(48.dp)
                 .clip(CircleShape)
                 .background(p.accent)
                 .clickable { onToggle() },
@@ -604,7 +608,7 @@ private fun TtsFab(
         ) {
             Text(
                 text = if (playing) "⏸" else "▶",
-                fontSize = 15.sp,
+                fontSize = 20.sp,
                 color = p.onAccent,
             )
         }

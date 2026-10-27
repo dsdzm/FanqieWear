@@ -1,6 +1,8 @@
 package com.fanqie.wear.ui
 
+import android.widget.Toast
 import androidx.compose.foundation.background
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -66,6 +68,8 @@ fun DetailScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var inShelf by remember { mutableStateOf(app.shelf.contains(bookId)) }
     var reload by remember { mutableIntStateOf(0) }
+    var exporting by remember { mutableStateOf<String?>(null) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val tasks by app.downloader.tasks.collectAsStateWithLifecycle()
 
     LaunchedEffect(bookId, source, reload) {
@@ -390,6 +394,50 @@ fun DetailScreen(
                                     }
                                     Spacer(Modifier.height(4.dp))
                                 }
+                            }
+                        }
+                    }
+
+                    item {
+                        GlassCard {
+                            Column(modifier = Modifier.fillMaxWidth().padding(10.dp)) {
+                                Text("导出 TXT", fontSize = dims.titleSmall, color = LocalPalette.current.text)
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = exporting ?: "去其他站点找这本书，抓到就存成 txt 并加进书架",
+                                    fontSize = dims.label,
+                                    color = LocalPalette.current.muted,
+                                    maxLines = 2,
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Pill(
+                                    text = if (exporting != null) "导出中…" else "开始导出",
+                                    compact = true,
+                                    selected = true,
+                                    onClick = {
+                                        if (exporting == null) {
+                                            exporting = "准备中…"
+                                            scope.launch {
+                                                val r = runCatching {
+                                                    app.exporter.export(
+                                                        book?.title ?: "",
+                                                        book?.author ?: "",
+                                                    ) { msg -> exporting = msg }
+                                                }
+                                                exporting = null
+                                                r.onSuccess {
+                                                    Toast.makeText(
+                                                        app,
+                                                        "已导出并加入书架：${it.chapterCount} 章",
+                                                        Toast.LENGTH_LONG,
+                                                    ).show()
+                                                }.onFailure {
+                                                    Toast.makeText(app, "导出失败：${it.message}", Toast.LENGTH_LONG).show()
+                                                }
+                                            }
+                                        }
+                                    },
+                                )
                             }
                         }
                     }

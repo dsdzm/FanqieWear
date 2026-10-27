@@ -171,7 +171,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 17 / versionName 2.1.0
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 18 / versionName 2.2.0
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -362,3 +362,13 @@ eSpeak 自带 104 个共振峰变体，实测同一句话基频差异明显：
 
 手机登录器为什么需要单独一个 App：番茄的 `sessionid` 是 HttpOnly，手机网页 JS 读不到，
 只有 App 自己的 WebView 能通过 `CookieManager` 取到完整 Cookie。
+
+## 2.2.0：导出 TXT + 设置精简 + 悬浮键修正 + 历史修复
+
+- **导出 TXT（找第三方站点）**：详情页「导出 TXT」按书名+作者搜所有站点，
+  挑章节最多的源整本抓下来，拼成 txt 存到 `Android/data/.../files/Download/TXT/`，
+  同时自动入库成"本地书"，书架里直接可读可听。
+- **设置页文案精简**：引擎状态、音色、缓存、番茄说明都压成一行。
+- **悬浮听书键**：跟随沉浸模式一起收起；主键 38→48dp，齿轮 18→34dp（原来点不到）。
+- **阅读历史**：补 `bookTitle` 字段，标题显示书名、副标题显示章节名 + 时间；
+  旧记录没有书名的回退查书架。

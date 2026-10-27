@@ -22,6 +22,8 @@ data class ShelfItem(
 @Serializable
 data class Progress(
     val bookId: String,
+    /** 书名，历史列表要显示；旧数据为空时回退到书架里的名字 */
+    val bookTitle: String = "",
     val itemId: String,
     val chapterTitle: String,
     val chapterIndex: Int,

@@ -97,12 +97,26 @@ class LocalLibrary(private val context: Context) {
         val text = decode(bytes)
         if (text.isBlank()) throw IllegalStateException("没读出文字，可能不是纯文本")
 
+        val title = guessTitle(fileName, text)
+        return writeBook(text, title, fileName, bytes.size.toLong(), onProgress)
+    }
+
+    /** 直接把一段完整文本存成一本本地书（第三方站点导出的 TXT 走这里） */
+    fun importText(text: String, title: String, fileName: String = "$title.txt"): LocalBook =
+        writeBook(text, title, fileName, text.length.toLong()) { _, _ -> }
+
+    private fun writeBook(
+        text: String,
+        title: String,
+        fileName: String,
+        sizeHint: Long,
+        onProgress: (Float, String) -> Unit,
+    ): LocalBook {
         onProgress(0.3f, "切分章节")
         val chunks = splitChapters(text)
         if (chunks.isEmpty()) throw IllegalStateException("切分不出章节")
 
-        val title = guessTitle(fileName, text)
-        val id = bookIdOf(title, bytes.size, bytes[0].toInt())
+        val id = bookIdOf(title, sizeHint.toInt(), text.firstOrNull()?.code ?: 0)
         val dir = File(root, id)
         // 重复导入直接复用，避免占两份空间
         readIndex(dir)?.let { existing ->
@@ -135,9 +149,9 @@ class LocalLibrary(private val context: Context) {
             fileName = fileName,
         )
         File(dir, "index.json").writeText(json.encodeToString(LocalIndex(book, index)))
-        onProgress(1f, "导入完成：${chunks.size} 章")
         return book
     }
+
 
     // ---------------- 解析细节 ----------------
 

@@ -31,6 +31,7 @@ class FanqieApp : Application() {
     lateinit var downloads: DownloadStore
         private set
     lateinit var downloader: DownloadManager
+    lateinit var exporter: com.fanqie.wear.data.TxtExporter
         private set
 
     /** 应用级作用域：下载等长任务不随页面销毁 */
@@ -56,6 +57,7 @@ class FanqieApp : Application() {
         tts = TtsPlayer(this)
         downloads = DownloadStore(this)
         downloader = DownloadManager(sources, downloads, scope)
+        exporter = com.fanqie.wear.data.TxtExporter(this, sources, sources.localLibrary)
     }
 
     /**

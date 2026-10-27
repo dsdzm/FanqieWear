@@ -185,6 +185,7 @@ fun FanqieWearApp() {
 
                         is Dest.Reader -> ReaderScreen(
                             bookId = dest.bookId,
+                            bookTitle = dest.title,
                             itemId = dest.itemId,
                             source = dest.source,
                             onBack = { pop() },
