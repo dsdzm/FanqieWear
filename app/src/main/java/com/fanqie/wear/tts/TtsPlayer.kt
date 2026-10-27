@@ -95,6 +95,12 @@ class TtsPlayer(private val context: Context) {
     private val ttsCache = TtsCache(context)
     private val onlineTts = OnlineTtsEngine(context, ttsCache)
     private val audioFile = AudioFilePlayer(context)
+
+    /** 章节语音包（下载后离线整章可播） */
+    val chapterStore = ChapterAudioStore(context)
+
+    /** 预取用：网络请求不能占着音频线程 */
+    private val netScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
     private var job: Job? = null
 
     @Volatile private var stopRequested = false
@@ -159,7 +165,8 @@ class TtsPlayer(private val context: Context) {
         prevId: String? = null,
         sourceKey: String = "",
     ) {
-        val chunks = splitChunks(
+        val stored = chapterStore.chunks(bookId, chapterId)
+        val chunks = stored ?: splitChunks(
             text,
             when {
                 useSystemVoice() -> 90
@@ -167,7 +174,7 @@ class TtsPlayer(private val context: Context) {
                 else -> 220
             },
         )
-        TtsLog.i("load", "《$title》切成 ${chunks.size} 块")
+        TtsLog.i("load", "《$title》${chunks.size} 块${if (stored != null) "（用已下载语音包）" else ""}")
         nextChapterId = nextId
         prevChapterId = prevId
         if (sourceKey.isNotBlank()) bookSourceKey = sourceKey
@@ -505,8 +512,9 @@ class TtsPlayer(private val context: Context) {
             val ok = when (engine) {
                 ENGINE_SYSTEM -> speakWithSystem(text, s.speed, s.pitch)
                 ENGINE_ONLINE -> speakWithOnline(
-                    text, s.speed, s.pitch,
+                    text, s.speed,
                     if (i == resumeChunk) resumeMs else 0,
+                    i,
                 )
                 else -> speakWithEspeak(text, s.speed, s.pitch, offset)
             }
@@ -539,16 +547,102 @@ class TtsPlayer(private val context: Context) {
             .onFailure { if (it !is CancellationException) TtsLog.e("sysTts", it) }
             .getOrDefault(false)
 
-    /** 在线语音：缓存优先，没缓存就合成；合成失败返回 false 由上层回退 */
-    private suspend fun speakWithOnline(text: String, speed: Float, pitch: Float, startMs: Int): Boolean {
-        val ratePercent = ((speed - 1f) * 100).toInt().coerceIn(-40, 80)
-        val file = onlineTts.cached(text, ratePercent)
-            ?: onlineTts.synthesize(text, ratePercent)
+    /**
+     * 在线语音：语音包 → 缓存 → 合成，逐级回退。
+     * 倍速交给播放器（MediaPlayer.setPlaybackParams），服务端始终按正常语速合成，
+     * 这样 2x/3x 不会失真。
+     */
+    private suspend fun speakWithOnline(
+        text: String,
+        speed: Float,
+        startMs: Int,
+        chunkIndex: Int,
+    ): Boolean {
+        val s = _state.value
+        val packed = chapterStore.file(s.bookId, s.chapterId, chunkIndex)
+        val file = packed
+            ?: onlineTts.cached(text, 0)
+            ?: onlineTts.synthesize(text, 0)
             ?: run {
                 TtsLog.w("online", "合成失败：${onlineTts.errorText ?: "无网络"}")
                 return false
             }
-        return audioFile.play(file, startMs) { resumeMs = it } >= 0
+        if (packed == null) prefetchFollowing(chunkIndex)
+        return audioFile.play(file, startMs, speed) { resumeMs = it } >= 0
+    }
+
+    /** 播放当前块的同时，把后面几块先合成好，避免每块之间卡一下 */
+    private fun prefetchFollowing(index: Int) {
+        val s = _state.value
+        if (s.sentences.isEmpty()) return
+        netScope.launch {
+            for (j in index + 1..minOf(index + 3, s.sentences.lastIndex)) {
+                val text = s.sentences[j]
+                if (chapterStore.file(s.bookId, s.chapterId, j) != null) continue
+                if (onlineTts.cached(text, 0) != null) continue
+                onlineTts.synthesize(text, 0)
+            }
+        }
+    }
+
+    /** 下载当前章的语音包（听书页按钮） */
+    suspend fun downloadCurrentChapter(onProgress: (Int, Int) -> Unit): Boolean {
+        val s = _state.value
+        if (s.chapterId.isBlank() || s.sentences.isEmpty()) return false
+        return chapterStore.save(
+            bookId = s.bookId,
+            chapterId = s.chapterId,
+            chunks = s.sentences,
+            ratePercent = 0,
+            synth = { text, rate -> onlineTts.synthesize(text, rate) },
+            onProgress = onProgress,
+        )
+    }
+
+    /**
+     * 往后连续下载 N 章的语音包（听书页「下载后续章节」）。
+     * 章节由播放器自己顺着 nextId 取，不依赖阅读页。
+     */
+    suspend fun downloadFollowing(count: Int, onProgress: (String) -> Unit): Int {
+        var done = 0
+        val s0 = _state.value
+        if (s0.chapterId.isBlank()) return 0
+
+        // 当前章先下
+        onProgress("本章")
+        if (chapterStore.has(s0.bookId, s0.chapterId) ||
+            downloadCurrentChapter { i, n -> onProgress("本章 $i/$n") }
+        ) done++
+
+        var next = nextChapterId
+        var guard = 0
+        while (next != null && done < count && guard < count + 2) {
+            guard++
+            val f = fetchChapter(next) ?: break
+            onProgress("《${f.title}》")
+            val chunks = splitChunks(f.text, 180)
+            val ok = chapterStore.save(
+                bookId = s0.bookId,
+                chapterId = f.chapterId,
+                chunks = chunks,
+                ratePercent = 0,
+                synth = { text, rate -> onlineTts.synthesize(text, rate) },
+                onProgress = { i, n -> onProgress("${done + 1}/$count · $i/$n") },
+            )
+            if (ok) done++
+            next = f.nextId
+        }
+        return done
+    }
+
+    fun currentChapterPacked(): Boolean {
+        val s = _state.value
+        return s.chapterId.isNotBlank() && chapterStore.has(s.bookId, s.chapterId)
+    }
+
+    fun deleteCurrentChapterPack() {
+        val s = _state.value
+        if (s.chapterId.isNotBlank()) chapterStore.remove(s.bookId, s.chapterId)
     }
 
     private suspend fun speakWithEspeak(text: String, speed: Float, pitch: Float, offset: Int): Boolean {

@@ -171,7 +171,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 19 / versionName 2.3.0
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 20 / versionName 2.4.0
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -382,3 +382,22 @@ eSpeak 自带 104 个共振峰变体，实测同一句话基频差异明显：
 - 实测：150 字 → 302KB / 1.0s，300 字 → 604KB / 1.8s，连续请求不被限流
 - 仍然走原来的缓存与播放链路（mp3 落盘、MediaPlayer 毫秒续播）
 - 在线失败自动回退内置 eSpeak，不再让你干等
+
+## 2.4.0：整章连续读 + 3 倍速 + 章节语音包
+
+- **在线默认读完整章**：播放当前块时在后台预取后 3 块（独立网络协程，不占音频线程），
+  块与块之间基本无缝。
+- **倍速到 3x**：0.8 / 1.0 / 1.5 / 2.0 / 3.0。在线语音固定按正常语速合成，
+  倍速由 `MediaPlayer.setPlaybackParams` 做，2x/3x 不失真。
+- **章节语音包**：听书页「下载本章语音」把这章所有分块存到 `filesDir/tts-audio/`，
+  「下载后续 5 章」顺着 nextId 连下；下过的章 `load()` 时直接用包里的分块，
+  **断网可整章听**。设置里能看到语音包占多少、一键清空。
+
+### 免费 TTS 调研
+
+| 服务 | 长文本 | 需要签名 | 结论 |
+|---|---|---|---|
+| 微软 Edge（晓晓） | ✅ | **需要** Sec-MS-GEC（自定义 CS64 + 魔改 SHA-256） | 浏览器里免费，接口已上 DRM，403 |
+| 百度翻译 gettts | ✅ 300 字实测 604KB | 否 | **当前采用**，偶尔限流，已加预取与缓存 |
+| 有道 dictvoice | ❌ 长文本 500 | 否 | 只适合单词/短句 |
+| 搜狗 synthesis | 302 跳转 | 是 | 需要签名，放弃 |

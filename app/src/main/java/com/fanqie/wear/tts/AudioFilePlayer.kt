@@ -21,7 +21,7 @@ class AudioFilePlayer(private val context: Context) {
      * 播完或被打断后返回当前进度（毫秒）。
      * [onProgress] 每 100ms 回一次，供上层记录续播点。
      */
-    suspend fun play(file: File, startMs: Int, onProgress: (Int) -> Unit): Int =
+    suspend fun play(file: File, startMs: Int, speed: Float = 1f, onProgress: (Int) -> Unit): Int =
         withContext(Dispatchers.Main) {
             var pos = startMs.coerceAtLeast(0)
             val mp = MediaPlayer()
@@ -30,6 +30,13 @@ class AudioFilePlayer(private val context: Context) {
                 mp.prepare()
                 val dur = runCatching { mp.duration }.getOrDefault(0)
                 if (startMs in 1 until dur) runCatching { mp.seekTo(startMs) }
+                // 3 倍速靠播放器变速，而不是让服务端读快了失真
+                if (speed > 1.01f || speed < 0.99f) {
+                    runCatching {
+                        mp.playbackParams = android.media.PlaybackParams()
+                            .setSpeed(speed.coerceIn(0.5f, 3f))
+                    }
+                }
                 mp.start()
                 while (currentCoroutineContext().isActive) {
                     val playing = runCatching { mp.isPlaying }.getOrDefault(false)

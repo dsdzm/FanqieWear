@@ -13,9 +13,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import android.widget.Toast
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +49,10 @@ fun ListenScreen(onBack: () -> Unit) {
     val dims = rememberDeviceDims()
     val p = LocalPalette.current
     val s by app.tts.state.collectAsStateWithLifecycle()
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var dl by remember { mutableStateOf<String?>(null) }
+    var packed by remember { mutableStateOf(app.tts.currentChapterPacked()) }
 
     Box(
         Modifier
@@ -104,7 +115,7 @@ fun ListenScreen(onBack: () -> Unit) {
             Spacer(Modifier.height(2.dp))
 
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf(0.8f, 1.0f, 1.2f, 1.5f).forEach { sp ->
+                listOf(0.8f, 1.0f, 1.5f, 2f, 3f).forEach { sp ->
                     Pill(
                         text = "${sp}x",
                         compact = true,
@@ -113,6 +124,53 @@ fun ListenScreen(onBack: () -> Unit) {
                     )
                 }
             }
+
+            Pill(
+                text = when {
+                    dl != null -> "下载中 $dl"
+                    packed -> "本章语音已下载"
+                    else -> "下载本章语音"
+                },
+                compact = true,
+                selected = packed,
+                onClick = {
+                    if (dl == null) {
+                        if (packed) {
+                            app.tts.deleteCurrentChapterPack()
+                            packed = false
+                            Toast.makeText(ctx, "已删除本章语音", Toast.LENGTH_SHORT).show()
+                        } else {
+                            dl = "0/0"
+                            scope.launch {
+                                val ok = app.tts.downloadCurrentChapter { i, n -> dl = "$i/$n" }
+                                dl = null
+                                packed = ok
+                                Toast.makeText(
+                                    ctx,
+                                    if (ok) "本章语音已保存，断网也能听" else "下载失败，稍后再试",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        }
+                    }
+                },
+            )
+
+            Pill(
+                text = if (dl != null) "批量下载中 $dl" else "下载后续 5 章",
+                compact = true,
+                onClick = {
+                    if (dl == null) {
+                        dl = "准备中"
+                        scope.launch {
+                            val n = app.tts.downloadFollowing(5) { msg -> dl = msg }
+                            dl = null
+                            packed = app.tts.currentChapterPacked()
+                            Toast.makeText(ctx, "已下载 $n 章语音", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
+            )
 
             Text(
                 text = "第 ${s.index + 1}/${s.sentences.size.coerceAtLeast(1)} 段 · 引擎 ${

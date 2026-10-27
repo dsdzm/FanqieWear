@@ -286,11 +286,24 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                                     color = p.text,
                                     maxLines = 1,
                                 )
+                                val packMb = app.tts.chapterStore.sizeBytes() / 1048576.0
+                                Text(
+                                    "语音包 %d 章 · %.1f MB".format(app.tts.chapterStore.chapterCount(), packMb),
+                                    fontSize = dims.label,
+                                    color = p.text,
+                                    maxLines = 1,
+                                )
                                 Spacer(Modifier.height(6.dp))
-                                Pill(text = "清空缓存", compact = true, onClick = {
-                                    cache.clear()
-                                    sizeMb = cache.sizeBytes() / 1048576.0
-                                })
+                                Row {
+                                    Pill(text = "清空缓存", compact = true, onClick = {
+                                        cache.clear()
+                                        sizeMb = cache.sizeBytes() / 1048576.0
+                                    })
+                                    Spacer(Modifier.width(6.dp))
+                                    Pill(text = "清空语音包", compact = true, onClick = {
+                                        app.tts.chapterStore.clear()
+                                    })
+                                }
                             }
                         }
                     }
@@ -330,17 +343,13 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                         )
                     }
                     item {
+                        val speeds = listOf(0.8f, 1.0f, 1.5f, 2.0f, 3.0f)
                         ChoiceCard(
                             "语速",
-                            listOf("0.8x", "1.0x", "1.2x", "1.5x"),
-                            when {
-                                s.ttsSpeed <= 0.85f -> 0
-                                s.ttsSpeed <= 1.05f -> 1
-                                s.ttsSpeed <= 1.3f -> 2
-                                else -> 3
-                            },
+                            speeds.map { if (it % 1f == 0f) "${it.toInt()}x" else "${it}x" },
+                            speeds.indexOfFirst { kotlin.math.abs(it - s.ttsSpeed) < 0.01f }.coerceAtLeast(0),
                         ) { v ->
-                            app.settings.update { it.copy(ttsSpeed = listOf(0.8f, 1.0f, 1.2f, 1.5f)[v]) }
+                            app.settings.update { it.copy(ttsSpeed = speeds[v]) }
                         }
                     }
                     item {
