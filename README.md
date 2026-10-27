@@ -171,7 +171,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 15 / versionName 1.7.0
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 16 / versionName 2.0.0
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -305,6 +305,27 @@ eSpeak 自带 104 个共振峰变体，实测同一句话基频差异明显：
 - 书籍 ID 由书名+文件大小+首字节算出，重复导入直接复用，不占两份空间
 
 1.7 整体规划见 [`docs/PLAN-1.7.md`](docs/PLAN-1.7.md)：手机登录器、多站点聚合、性能优化、本地导入、在线 TTS。
+
+### v2.0.0 五件事一起落地
+
+| 能力 | 入口 | 说明 |
+|---|---|---|
+| **多站点聚合** | 设置 → 网络与书源 → 聚合站点 | 书源是 JSON 规则（`assets/sources/sites.json`），加站点不用改代码；一次搜索查全部站点，同名去重；详情页可「换源」 |
+| **手机登录器** | 设置 → 番茄账号 → 用手机扫码登录 | 手表开 8765 端口 + 二维码，手机同一 WiFi 打开网页粘贴 Cookie，回传后自动验证 |
+| **在线 TTS** | 设置 → 语音听书 → 朗读引擎 → 在线 | Edge 大声朗读接口，6 个中文音色，mp3 分块合成 |
+| **听书离线缓存** | 同上，可看占用/清空 | 合成结果按「文本+音色+语速」哈希落盘，重听不联网，断网可播已缓存章节 |
+| **本地导入** | 书架 → ＋ 导入本地书 | 自动识别编码与章节（1.7.0 已有） |
+| **性能** | — | 启动不再预热 eSpeak（首次听书才解压）、Coil 图片缓存限额 |
+
+#### 声明式书源怎么工作
+
+`sites.json` 里一个站点一段规则：搜索用什么路径/方法、列表/标题/链接/作者的选择器、
+详情页字段、目录选择器、正文容器与要删的噪声节点。选择器支持 `css@attr` 与逗号回退，
+解析用 jsoup。站点改版只改 JSON；也可以把新 JSON 放到 `filesDir/sources.json` 覆盖内置规则（云书源预留）。
+
+> 注意：内置站点里只有 biquge365 是长期实测过的，其余标注了"未实测"。
+> 这个环境访问部分站点不稳定，没法逐个验证；请在手表上用「检测书源可用性」跑一遍，
+> 不通过的关掉即可，或把规则发我修。
 
 
 

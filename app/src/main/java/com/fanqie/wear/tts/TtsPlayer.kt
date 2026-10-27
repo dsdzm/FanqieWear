@@ -92,6 +92,9 @@ class TtsPlayer(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + audioExecutor.asCoroutineDispatcher() + crashGuard)
 
     private val systemTts = SystemTts(context)
+    private val ttsCache = TtsCache(context)
+    private val edgeTts = EdgeTtsEngine(context, ttsCache)
+    private val audioFile = AudioFilePlayer(context)
     private var job: Job? = null
 
     @Volatile private var stopRequested = false
@@ -100,21 +103,14 @@ class TtsPlayer(private val context: Context) {
     /** 续播位置：暂停时记住"第几块 + 块内第几个采样" */
     @Volatile private var resumeChunk = -1
     @Volatile private var resumeSample = 0
+    /** 在线语音按毫秒记续播点 */
+    @Volatile private var resumeMs = 0
 
     init {
         TtsLog.init(context)
-        scope.launch {
-            runCatching {
-                // 先记住设置的音色，ensureReady 里会用它初始化
-                EspeakEngine.setVoice(settings()?.ttsVoice ?: "cmn")
-                val ok = EspeakEngine.ensureReady(context)
-                _state.value = _state.value.copy(
-                    ready = ok,
-                    error = if (ok) null else "内置语音引擎初始化失败",
-                )
-                TtsLog.i("player", "启动预热完成 espeakReady=$ok")
-            }.onFailure { TtsLog.e("player-init", it) }
-        }
+        // 启动只记下音色，不预热 eSpeak：它要解压 2.8MB 数据，放到第一次听书时再做，
+        // 免得每次冷启动都卡一下
+        runCatching { EspeakEngine.setVoice(settings()?.ttsVoice ?: "cmn") }
         // 系统语音有就顺手探一下，供设置页显示
         scope.launch {
             runCatching { systemTts.ensureReady() }.onSuccess {
@@ -425,10 +421,13 @@ class TtsPlayer(private val context: Context) {
             val offset = if (i == resumeChunk && resumeSample > 0) resumeSample else 0
             _state.value = s.copy(index = i, playing = true)
 
-            val ok = if (engine == ENGINE_SYSTEM) {
-                speakWithSystem(text, s.speed, s.pitch)
-            } else {
-                speakWithEspeak(text, s.speed, s.pitch, offset)
+            val ok = when (engine) {
+                ENGINE_SYSTEM -> speakWithSystem(text, s.speed, s.pitch)
+                ENGINE_ONLINE -> speakWithOnline(
+                    text, s.speed, s.pitch,
+                    if (i == resumeChunk) resumeMs else 0,
+                )
+                else -> speakWithEspeak(text, s.speed, s.pitch, offset)
             }
 
             if (!ok) {
@@ -458,6 +457,19 @@ class TtsPlayer(private val context: Context) {
         runCatching { systemTts.speak(text, speed, pitch) }
             .onFailure { if (it !is CancellationException) TtsLog.e("sysTts", it) }
             .getOrDefault(false)
+
+    /** 在线语音：缓存优先，没缓存就合成；合成失败返回 false 由上层回退 */
+    private suspend fun speakWithOnline(text: String, speed: Float, pitch: Float, startMs: Int): Boolean {
+        val voice = settings()?.ttsOnlineVoice ?: "zh-CN-XiaoxiaoNeural"
+        val ratePercent = ((speed - 1f) * 100).toInt().coerceIn(-40, 80)
+        val file = ttsCache.find(text, voice, ratePercent)
+            ?: edgeTts.synthesize(text, voice, ratePercent)
+            ?: run {
+                TtsLog.w("online", "合成失败：${edgeTts.errorText ?: "无网络"}")
+                return false
+            }
+        return audioFile.play(file, startMs) { resumeMs = it } >= 0
+    }
 
     private suspend fun speakWithEspeak(text: String, speed: Float, pitch: Float, offset: Int): Boolean {
         // 音色在设置里可切，切了要立刻生效；setVoice 内部会判重，不会每次都重载
@@ -595,10 +607,27 @@ class TtsPlayer(private val context: Context) {
     /** 真正决定这次用哪个引擎；auto 优先系统语音，不可用就回落到 eSpeak */
     private suspend fun decideEngine(): String {
         val pref = settings()?.ttsEngine ?: ENGINE_AUTO
-        if (pref == ENGINE_ESPEAK) return ENGINE_ESPEAK
-        val sysOk = if (systemTts.isInitialized) systemTts.isChineseAvailable else systemTts.ensureReady()
-        return if (sysOk) ENGINE_SYSTEM else ENGINE_ESPEAK
+        return when (pref) {
+            ENGINE_ESPEAK -> ENGINE_ESPEAK
+            ENGINE_SYSTEM -> ENGINE_SYSTEM
+            ENGINE_ONLINE -> ENGINE_ONLINE
+            else -> {
+                val sysOk = if (systemTts.isInitialized) systemTts.isChineseAvailable else systemTts.ensureReady()
+                when {
+                    sysOk -> ENGINE_SYSTEM
+                    isOnline() -> ENGINE_ONLINE
+                    else -> ENGINE_ESPEAK
+                }
+            }
+        }
     }
+
+    private fun isOnline(): Boolean = runCatching {
+        val cm = context.getSystemService(android.net.ConnectivityManager::class.java)
+        val net = cm?.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(net) ?: return false
+        caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }.getOrDefault(false)
 
     /** 语速倍率 → eSpeak 的每分钟词数（默认 170，比 175 稍慢，中文更清楚） */
     private fun wpmOf(speed: Float): Int = (170f * speed).toInt().coerceIn(80, 450)
@@ -651,5 +680,6 @@ class TtsPlayer(private val context: Context) {
         const val ENGINE_AUTO = "auto"
         const val ENGINE_SYSTEM = "system"
         const val ENGINE_ESPEAK = "espeak"
+        const val ENGINE_ONLINE = "online"
     }
 }

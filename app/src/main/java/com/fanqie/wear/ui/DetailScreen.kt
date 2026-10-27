@@ -1,6 +1,7 @@
 package com.fanqie.wear.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,11 +53,13 @@ fun DetailScreen(
     onBack: () -> Unit,
     onChapters: () -> Unit,
     onRead: (String) -> Unit,
+    onSwitchBook: (String, String) -> Unit = { _, _ -> },
 ) {
     val dims = rememberDeviceDims()
     val state = rememberScalingLazyListState()
 
     var book by remember { mutableStateOf<Book?>(null) }
+    var altSources by remember { mutableStateOf<List<Book>>(emptyList()) }
     var chapterCount by remember { mutableIntStateOf(0) }
     var firstChapter by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
@@ -78,6 +81,17 @@ fun DetailScreen(
                 error = it.message ?: "加载失败"
             }
         loading = false
+    }
+
+    // 聚合源：顺便查一下这本书在其他站点有没有，用于「换源」
+    LaunchedEffect(book?.title, source) {
+        if (source != Source.AGG) {
+            altSources = emptyList()
+            return@LaunchedEffect
+        }
+        val b = book ?: return@LaunchedEffect
+        val agg = app.sources.of(Source.AGG) as? com.fanqie.wear.data.web.AggregateSource
+        altSources = agg?.alternatives(b.title, b.author)?.take(8).orEmpty()
     }
 
     ScreenScaffold(
@@ -346,6 +360,40 @@ fun DetailScreen(
                         }
                     }
 
+                    if (altSources.isNotEmpty()) {
+                        item {
+                            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp)) {
+                                Text(
+                                    text = "其他来源 ${altSources.size} 个",
+                                    fontSize = dims.label,
+                                    color = LocalPalette.current.muted,
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                altSources.take(6).forEach { alt ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(LocalPalette.current.card)
+                                            .clickable { onSwitchBook(alt.id, alt.title) }
+                                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Text(
+                                            text = alt.author.ifBlank { "未知来源" },
+                                            fontSize = dims.label,
+                                            color = LocalPalette.current.text,
+                                            maxLines = 1,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        Text("换到这里", fontSize = dims.label, color = LocalPalette.current.accent)
+                                    }
+                                    Spacer(Modifier.height(4.dp))
+                                }
+                            }
+                        }
+                    }
+
                     item { Spacer(Modifier.height(10.dp)) }
                 }
             }
@@ -358,5 +406,6 @@ internal fun sourceTint(source: Source): Color = when (source) {
     Source.BIQUGE -> Color(0xFF2F6B5A)
     Source.QIMAO -> Color(0xFF3A6EA5)
     Source.FANQIE -> Color(0xFF8A3A34)
+    Source.AGG -> Color(0xFF4A5A8A)
     Source.LOCAL -> Color(0xFF6B5A2F)
 }

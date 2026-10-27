@@ -48,7 +48,7 @@ import kotlinx.coroutines.launch
  * 保存之后必须实测一次（拿第 11 章试读），才知道服务端认不认。
  */
 @Composable
-fun LoginScreen(onBack: () -> Unit, onWebLogin: () -> Unit = {}) {
+fun LoginScreen(onBack: () -> Unit, onWebLogin: () -> Unit = {}, onPhoneLogin: () -> Unit = {}) {
     val dims = rememberDeviceDims()
     val p = LocalPalette.current
     val state = rememberScalingLazyListState()
@@ -113,6 +113,16 @@ fun LoginScreen(onBack: () -> Unit, onWebLogin: () -> Unit = {}) {
                         )
                     }
                 }
+            }
+
+            item {
+                NavCard(
+                    title = "用手机扫码登录",
+                    subtitle = "手机登录后把 Cookie 传回手表",
+                    icon = R.drawable.ic_person,
+                    tint = p.accent,
+                    onClick = onPhoneLogin,
+                )
             }
 
             item {

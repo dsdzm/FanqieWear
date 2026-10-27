@@ -24,8 +24,8 @@ android {
         applicationId = "com.fanqie.wear"
         minSdk = 26
         targetSdk = 34
-        versionCode = 15
-        versionName = "1.7.0"
+        versionCode = 16
+        versionName = "2.0.0"
 
         // 手表基本都是这两个 ABI；内置语音引擎的 .so 按 ABI 分别提供
         ndk {
@@ -108,6 +108,11 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // 声明式书源靠 jsoup 做 DOM 选择，比正则稳得多
+    implementation("org.jsoup:jsoup:1.18.1")
+    // 手机登录器要在手表上显示二维码（只取 core，不引 android 模块）
+    implementation("com.google.zxing:core:3.5.3")
 
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.2")
 }

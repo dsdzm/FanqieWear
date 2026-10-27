@@ -12,6 +12,10 @@ class SourceRegistry(context: Context, private val settings: SettingsStore) {
 
     val localLibrary = LocalLibrary(context)
 
+    /** 声明式站点 + 聚合搜索 */
+    val sites = com.fanqie.wear.data.web.SiteRepository(context, settings)
+    private val aggregate = com.fanqie.wear.data.web.AggregateSource { sites.sources() }
+
     private val biqugeApi = BiqugeApi(context)
     private val qimaoApi = QimaoApi(context)
     private val fanqieApi = FanqieApi(context) { settings.value.cookie }
@@ -22,12 +26,13 @@ class SourceRegistry(context: Context, private val settings: SettingsStore) {
     private val local = LocalSource(localLibrary)
 
     /** 设置页展示顺序：能直接用正文的排前面 */
-    val all: List<BookSource> = listOf(biquge, qimao, fanqie, local)
+    val all: List<BookSource> = listOf(aggregate, biquge, qimao, fanqie, local)
 
     fun of(source: Source): BookSource = when (source) {
         Source.BIQUGE -> biquge
         Source.QIMAO -> qimao
         Source.FANQIE -> fanqie
+        Source.AGG -> aggregate
         Source.LOCAL -> local
     }
 

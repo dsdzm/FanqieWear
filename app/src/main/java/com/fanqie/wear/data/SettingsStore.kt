@@ -63,6 +63,10 @@ data class AppSettings(
     val ttsEngine: String = "auto",
     /** 内置引擎音色：eSpeak voice spec，如 cmn / cmn+f3 / cmn+m3 */
     val ttsVoice: String = "cmn",
+    /** 在线语音音色（Edge TTS） */
+    val ttsOnlineVoice: String = "zh-CN-XiaoxiaoNeural",
+    /** 被关闭的声明式站点 key，逗号分隔 */
+    val disabledSites: String = "",
 
     /** 滚动/点击震动反馈 */
     val haptics: Boolean = true,
@@ -107,6 +111,8 @@ class SettingsStore(context: Context) {
         ttsAutoNext = sp.getBoolean("ttsAutoNext", true),
         ttsEngine = sp.getString("ttsEngine", "auto") ?: "auto",
         ttsVoice = sp.getString("ttsVoice", "cmn") ?: "cmn",
+        ttsOnlineVoice = sp.getString("ttsOnlineVoice", "zh-CN-XiaoxiaoNeural") ?: "zh-CN-XiaoxiaoNeural",
+        disabledSites = sp.getString("disabledSites", "") ?: "",
         haptics = sp.getBoolean("haptics", true),
         edgeBack = sp.getBoolean("edgeBack", true),
     )
@@ -142,6 +148,8 @@ class SettingsStore(context: Context) {
             .putBoolean("ttsAutoNext", n.ttsAutoNext)
             .putString("ttsEngine", n.ttsEngine)
             .putString("ttsVoice", n.ttsVoice)
+            .putString("ttsOnlineVoice", n.ttsOnlineVoice)
+            .putString("disabledSites", n.disabledSites)
             .putBoolean("haptics", n.haptics)
             .putBoolean("edgeBack", n.edgeBack)
             .apply()

@@ -253,15 +253,16 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                     item {
                         ChoiceCard(
                             "朗读引擎",
-                            listOf("自动", "系统语音", "内置 eSpeak"),
+                            listOf("自动", "系统语音", "在线", "内置"),
                             when (s.ttsEngine) {
                                 "system" -> 1
-                                "espeak" -> 2
+                                "online" -> 2
+                                "espeak" -> 3
                                 else -> 0
                             },
                         ) { v ->
                             app.settings.update {
-                                it.copy(ttsEngine = listOf("auto", "system", "espeak")[v])
+                                it.copy(ttsEngine = listOf("auto", "system", "online", "espeak")[v])
                             }
                         }
                     }
@@ -277,6 +278,36 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                             color = p.muted,
                             maxLines = 4,
                         )
+                    }
+                    item {
+                        val onlineVoices = com.fanqie.wear.tts.EdgeTtsEngine.VOICE_LIST
+                        ChoiceCard(
+                            "在线音色",
+                            onlineVoices.map { it.first },
+                            onlineVoices.indexOfFirst { it.second == s.ttsOnlineVoice }.coerceAtLeast(0),
+                        ) { v ->
+                            app.settings.update { it.copy(ttsOnlineVoice = onlineVoices[v].second, ttsEngine = "online") }
+                        }
+                    }
+                    item {
+                        val cache = remember { com.fanqie.wear.tts.TtsCache(ctx) }
+                        var sizeMb by remember { mutableStateOf(cache.sizeBytes() / 1048576.0) }
+                        GlassCard {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text("听书缓存", fontSize = dims.label, color = p.muted)
+                                Text(
+                                    "已缓存 %.1f MB · 断网也能重听已读过的章节".format(sizeMb),
+                                    fontSize = dims.label,
+                                    color = p.text,
+                                    maxLines = 2,
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Pill(text = "清空缓存", compact = true, onClick = {
+                                    cache.clear()
+                                    sizeMb = cache.sizeBytes() / 1048576.0
+                                })
+                            }
+                        }
                     }
                     item {
                         val voices = EspeakEngine.VOICES
@@ -445,6 +476,16 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                         )
                     }
 
+                    item { SectionLabel("聚合站点") }
+                    items(app.sources.sites.rules().size) { i ->
+                        val rule = app.sources.sites.rules()[i]
+                        val on = app.sources.sites.isEnabled(rule.key)
+                        SwitchCard(rule.name, rule.note.ifBlank { rule.base }, on) {
+                            app.sources.sites.setEnabled(rule.key, !on)
+                            probeResults = emptyMap()
+                        }
+                    }
+
                     item {
                         Pill(
                             text = if (checking) "检测中…" else "检测书源可用性",
@@ -456,6 +497,11 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                                         app.sources.all.forEach { src ->
                                             map[src.source.key] =
                                                 runCatching { src.ping() }.getOrElse { it.message ?: "不可用" }
+                                            probeResults = map.toMap()
+                                        }
+                                        app.sources.sites.sources().forEach { site ->
+                                            map[site.siteKey] =
+                                                runCatching { site.ping() }.getOrElse { it.message ?: "不可用" }
                                             probeResults = map.toMap()
                                         }
                                         checking = false

@@ -40,6 +40,15 @@ class FanqieApp : Application() {
         super.onCreate()
         instance = this
         installCrashLogger()
+        // 封面图：内存缓存压小一点（手表内存紧），磁盘缓存 64MB
+        runCatching {
+            coil.Coil.setImageLoader(
+                coil.ImageLoader.Builder(this)
+                    .memoryCache { coil.memory.MemoryCache.Builder(this).maxSizePercent(0.12).build() }
+                    .diskCache { coil.disk.DiskCache.Builder().directory(cacheDir.resolve("img")).maxSizeBytes(64L * 1024 * 1024).build() }
+                    .build(),
+            )
+        }
         FontDecoder.load(this)
         settings = SettingsStore(this)
         sources = SourceRegistry(this, settings)
