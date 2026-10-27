@@ -358,4 +358,5 @@ internal fun sourceTint(source: Source): Color = when (source) {
     Source.BIQUGE -> Color(0xFF2F6B5A)
     Source.QIMAO -> Color(0xFF3A6EA5)
     Source.FANQIE -> Color(0xFF8A3A34)
+    Source.LOCAL -> Color(0xFF6B5A2F)
 }

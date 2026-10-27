@@ -10,6 +10,8 @@ import android.content.Context
  */
 class SourceRegistry(context: Context, private val settings: SettingsStore) {
 
+    val localLibrary = LocalLibrary(context)
+
     private val biqugeApi = BiqugeApi(context)
     private val qimaoApi = QimaoApi(context)
     private val fanqieApi = FanqieApi(context) { settings.value.cookie }
@@ -17,14 +19,16 @@ class SourceRegistry(context: Context, private val settings: SettingsStore) {
     private val biquge = BiqugeSource(biqugeApi)
     private val qimao = QimaoSource(qimaoApi)
     private val fanqie = FanqieSource(fanqieApi)
+    private val local = LocalSource(localLibrary)
 
     /** 设置页展示顺序：能直接用正文的排前面 */
-    val all: List<BookSource> = listOf(biquge, qimao, fanqie)
+    val all: List<BookSource> = listOf(biquge, qimao, fanqie, local)
 
     fun of(source: Source): BookSource = when (source) {
         Source.BIQUGE -> biquge
         Source.QIMAO -> qimao
         Source.FANQIE -> fanqie
+        Source.LOCAL -> local
     }
 
     /** 用户在设置里选的默认源 */

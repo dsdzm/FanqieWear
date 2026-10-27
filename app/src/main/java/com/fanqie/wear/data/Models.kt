@@ -10,6 +10,7 @@ enum class Source(val key: String, val label: String) {
     BIQUGE("biquge", "笔趣阁"),
     QIMAO("qimao", "七猫"),
     FANQIE("fanqie", "番茄"),
+    LOCAL("local", "本地"),
     ;
 
     companion object {

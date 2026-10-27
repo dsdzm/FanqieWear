@@ -171,7 +171,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 14 / versionName 1.6.6
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 15 / versionName 1.7.0
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -293,6 +293,18 @@ eSpeak 自带 104 个共振峰变体，实测同一句话基频差异明显：
 
 变体只改共振峰与基频，不改发音规则，所以吐字方式不变、只是音色不同。
 入口：设置 → 语音听书 → 内置音色，附带「试听这个音色」。
+
+### v1.7.0 本地导入（自动分章）
+
+书架顶部「＋ 导入本地书」，选 txt 即可，导入后与网络书完全一致（可读、可听、进书架）。
+
+- 编码三级回退：BOM → 严格 UTF-8（`CodingErrorAction.REPORT`）→ GB18030，覆盖 GBK/GB2312 老书
+- 分章正则：`第[0-9零一二三四五六七八九十百千万两]{1,10}[章节回卷]`（含"第 2 章"带空格写法）、
+  `Chapter N`、`序章/楔子/番外…`、`1、标题`；一条都匹配不到就按 3000 字切片
+- 正文按 UTF-8 重写一份并记录**字节偏移**，阅读时 `RandomAccessFile` 随机读，几十 MB 不进内存
+- 书籍 ID 由书名+文件大小+首字节算出，重复导入直接复用，不占两份空间
+
+1.7 整体规划见 [`docs/PLAN-1.7.md`](docs/PLAN-1.7.md)：手机登录器、多站点聚合、性能优化、本地导入、在线 TTS。
 
 
 
