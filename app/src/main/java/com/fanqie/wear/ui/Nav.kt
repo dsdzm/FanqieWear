@@ -36,6 +36,7 @@ sealed interface Dest {
     data object Login : Dest
     data object WebLogin : Dest
     data object PhoneLogin : Dest
+    data object Listen : Dest
     data class Detail(val bookId: String, val title: String, val source: Source) : Dest
     data class Chapters(val bookId: String, val title: String, val source: Source) : Dest
     data class Reader(val bookId: String, val itemId: String, val title: String, val source: Source) : Dest
@@ -180,6 +181,8 @@ fun FanqieWearApp() {
                             onChapter = { itemId -> push(Dest.Reader(dest.bookId, itemId, dest.title, dest.source)) },
                         )
 
+                        is Dest.Listen -> ListenScreen(onBack = { pop() })
+
                         is Dest.Reader -> ReaderScreen(
                             bookId = dest.bookId,
                             itemId = dest.itemId,
@@ -188,6 +191,7 @@ fun FanqieWearApp() {
                             onOpenChapters = { push(Dest.Chapters(dest.bookId, dest.title, dest.source)) },
                             onLogin = { push(Dest.Login) },
                             onOpenTtsSettings = { push(Dest.SettingsDetail(3)) },
+                            onOpenListen = { push(Dest.Listen) },
                         )
                     }
                 }

@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -88,6 +89,7 @@ fun ReaderScreen(
     onOpenChapters: () -> Unit,
     onLogin: () -> Unit = {},
     onOpenTtsSettings: () -> Unit = {},
+    onOpenListen: () -> Unit = {},
 ) {
     val dims = rememberDeviceDims()
     val settings by app.settings.state.collectAsStateWithLifecycle()
@@ -107,6 +109,8 @@ fun ReaderScreen(
     var retry by remember { mutableIntStateOf(0) }
 
     var page by remember(currentId) { mutableIntStateOf(0) }
+    /** 沉浸模式：默认收起底部操作条，点屏幕中央展开/收起 */
+    var chrome by remember { mutableStateOf(false) }
     var pages by remember { mutableStateOf(listOf<String>()) }
 
     val ttsState by app.tts.state.collectAsStateWithLifecycle()
@@ -440,7 +444,12 @@ fun ReaderScreen(
                             modifier = Modifier
                                 .weight(0.4f)
                                 .fillMaxHeight()
-                                .pointerInput(currentId) { detectTapGestures(onDoubleTap = { onOpenChapters() }) },
+                                .pointerInput(currentId) {
+                                    detectTapGestures(
+                                        onTap = { chrome = !chrome },
+                                        onDoubleTap = { onOpenChapters() },
+                                    )
+                                },
                         )
                         Box(
                             modifier = Modifier
@@ -474,7 +483,9 @@ fun ReaderScreen(
                                 lineHeight = fontSize * lineMul,
                                 color = fg,
                                 textAlign = if (settings.justify) TextAlign.Justify else TextAlign.Start,
-                                modifier = Modifier.padding(vertical = paraGap / 2),
+                                modifier = Modifier
+                                    .padding(vertical = paraGap / 2)
+                                    .clickable { chrome = !chrome },
                             )
                         }
                         item {
@@ -494,6 +505,25 @@ fun ReaderScreen(
                     }
                 }
             }
+
+            // 悬浮听书键：点了直接在正文里开始读，不跳页面；齿轮进听书页
+            TtsFab(
+                playing = onThisChapter && ttsState.playing,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 2.dp, bottom = 6.dp),
+                onToggle = {
+                    if (onThisChapter) {
+                        if (ttsState.playing) app.tts.pause() else app.tts.play()
+                    } else if (content.isNotBlank()) {
+                        app.tts.load(bookId, currentId, title, content, nextId, prevId, source.key)
+                        app.tts.setSpeed(settings.ttsSpeed)
+                        app.tts.setPitch(settings.ttsPitch)
+                        app.tts.play()
+                    }
+                },
+                onOpen = onOpenListen,
+            )
         }
 
         if (settings.bottomProgress) {
@@ -519,9 +549,9 @@ fun ReaderScreen(
                     )
                 }
             }
-        }
 
-        // 底部操作条
+        // 底部操作条：沉浸模式下收起，点屏幕中央再展开
+        if (!chrome) return@Column
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -530,35 +560,6 @@ fun ReaderScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Pill(text = "上章", onClick = { prevId?.let { currentId = it } }, minWidth = 46.dp, compact = true)
-            Box(
-                modifier = Modifier
-                    .heightIn(min = 30.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(LocalPalette.current.accent)
-                    .clickable {
-                        if (onThisChapter) {
-                            if (ttsState.playing) app.tts.pause() else app.tts.play()
-                        } else if (content.isNotBlank()) {
-                            app.tts.load(bookId, currentId, title, content, nextId)
-                            app.tts.setSpeed(settings.ttsSpeed)
-                            app.tts.setPitch(settings.ttsPitch)
-                            app.tts.play()
-                        }
-                    }
-                    .padding(horizontal = 14.dp, vertical = 4.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = when {
-                        onThisChapter && ttsState.playing -> "⏸ 暂停"
-                        onThisChapter -> "▶ 续听"
-                        else -> "▶ 听书"
-                    },
-                    fontSize = dims.label,
-                    fontWeight = FontWeight.SemiBold,
-                    color = LocalPalette.current.onAccent,
-                )
-            }
             if (settings.pageMode == 1 && pages.isNotEmpty()) {
                 Text("${page + 1}/${pages.size}", fontSize = dims.label, color = subFg, maxLines = 1)
             } else {
@@ -567,6 +568,45 @@ fun ReaderScreen(
         }
     }
 }
+}
 
 private fun Color.orFallback(fallback: Color): Color =
     if (this == Color.Unspecified) fallback else this
+
+/** 悬浮听书键：主按钮播放/暂停，右上角小齿轮进听书页 */
+@Composable
+private fun TtsFab(
+    playing: Boolean,
+    modifier: Modifier = Modifier,
+    onToggle: () -> Unit,
+    onOpen: () -> Unit,
+) {
+    val p = LocalPalette.current
+    Column(modifier = modifier, horizontalAlignment = Alignment.End) {
+        Box(
+            modifier = Modifier
+                .size(18.dp)
+                .clip(CircleShape)
+                .background(p.cardHigh)
+                .clickable { onOpen() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("⚙", fontSize = 10.sp, color = p.muted)
+        }
+        Spacer(Modifier.height(3.dp))
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(p.accent)
+                .clickable { onToggle() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = if (playing) "⏸" else "▶",
+                fontSize = 15.sp,
+                color = p.onAccent,
+            )
+        }
+    }
+}

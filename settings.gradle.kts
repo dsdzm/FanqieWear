@@ -21,3 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "FanqieWear"
 include(":app")
+include(":phone-login")

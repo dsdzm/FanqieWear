@@ -171,7 +171,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 16 / versionName 2.0.0
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 17 / versionName 2.1.0
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -348,3 +348,17 @@ eSpeak 自带 104 个共振峰变体，实测同一句话基频差异明显：
 本项目未使用番茄小说的任何私有 SDK 或 App 签名，仅解析公开网页内容；
 不提供下载、不破解付费章节。所有文字版权归原作者与平台所有。
 若相关方认为不妥，请删除本项目。
+
+## 2.1.0：手机登录器 + 沉浸阅读 + 听书页 + 双列首页
+
+| 能力 | 入口 | 说明 |
+|---|---|---|
+| **手机登录器 App** | 独立 APK `ShugeLogin` | WebView 登录番茄 → `CookieManager` 拿全量 Cookie（含 HttpOnly）→ 局域网发给手表 |
+| **沉浸阅读** | 阅读页 | 默认收起底部条，点屏幕中央展开/收起；时间与返回键不受影响 |
+| **听书页** | 阅读页悬浮键的齿轮 | 暂停/上一章/下一章/倍速；章节由播放器自己取，不依赖阅读页 |
+| **悬浮听书键** | 阅读页右下角 | 点一下直接在正文里朗读（不跳页），边听边读 |
+| **双列首页** | 首页 | 发现区改双列宫格，设置里可切回单列 |
+| **第三方站点下载** | 详情页「下载全本」 | 聚合源同样支持，走同一套下载器 |
+
+手机登录器为什么需要单独一个 App：番茄的 `sessionid` 是 HttpOnly，手机网页 JS 读不到，
+只有 App 自己的 WebView 能通过 `CookieManager` 取到完整 Cookie。

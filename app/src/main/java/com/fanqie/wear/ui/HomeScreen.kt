@@ -1,6 +1,7 @@
 package com.fanqie.wear.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -100,32 +101,78 @@ fun HomeScreen(
             }
 
             item { SectionLabel("发现") }
-            item {
-                NavCard(
-                    title = "分类书库",
-                    subtitle = "按题材翻书 · 可加载更多",
-                    icon = R.drawable.ic_rank,
-                    tint = p.accent,
-                    onClick = onRank,
-                )
-            }
-            item {
-                NavCard(
-                    title = "书荒广场",
-                    subtitle = "按书源随机推荐",
-                    icon = R.drawable.ic_compass,
-                    tint = p.jade,
-                    onClick = onExplore,
-                )
-            }
-            item {
-                NavCard(
-                    title = "搜索",
-                    subtitle = "书名、作者",
-                    icon = R.drawable.ic_search,
-                    tint = p.jade,
-                    onClick = onSearch,
-                )
+            if (settings.homeGrid) {
+                // 双列：一行两张，图标在上、文字在下，窄屏也能一眼看全
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(dims.gridGap),
+                    ) {
+                        GridCard(
+                            title = "分类书库",
+                            icon = R.drawable.ic_rank,
+                            tint = p.accent,
+                            modifier = Modifier.weight(1f),
+                            onClick = onRank,
+                        )
+                        GridCard(
+                            title = "书荒广场",
+                            icon = R.drawable.ic_compass,
+                            tint = p.jade,
+                            modifier = Modifier.weight(1f),
+                            onClick = onExplore,
+                        )
+                    }
+                }
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(dims.gridGap),
+                    ) {
+                        GridCard(
+                            title = "搜索",
+                            icon = R.drawable.ic_search,
+                            tint = p.jade,
+                            modifier = Modifier.weight(1f),
+                            onClick = onSearch,
+                        )
+                        GridCard(
+                            title = "我的书架",
+                            icon = R.drawable.ic_book,
+                            tint = p.accent,
+                            modifier = Modifier.weight(1f),
+                            onClick = onShelf,
+                        )
+                    }
+                }
+            } else {
+                item {
+                    NavCard(
+                        title = "分类书库",
+                        subtitle = "按题材翻书 · 可加载更多",
+                        icon = R.drawable.ic_rank,
+                        tint = p.accent,
+                        onClick = onRank,
+                    )
+                }
+                item {
+                    NavCard(
+                        title = "书荒广场",
+                        subtitle = "按书源随机推荐",
+                        icon = R.drawable.ic_compass,
+                        tint = p.jade,
+                        onClick = onExplore,
+                    )
+                }
+                item {
+                    NavCard(
+                        title = "搜索",
+                        subtitle = "书名、作者",
+                        icon = R.drawable.ic_search,
+                        tint = p.jade,
+                        onClick = onSearch,
+                    )
+                }
             }
 
             item { SectionLabel("书架") }
@@ -257,5 +304,49 @@ private fun ContinueCard(
                 )
             }
         }
+    }
+}
+
+/** 首页双列的方形入口 */
+@Composable
+private fun GridCard(
+    title: String,
+    icon: Int,
+    tint: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val p = LocalPalette.current
+    val dims = rememberDeviceDims()
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(p.card)
+            .clickable { onClick() }
+            .padding(vertical = 12.dp, horizontal = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(tint.copy(alpha = 0.18f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            androidx.compose.foundation.Image(
+                painter = androidx.compose.ui.res.painterResource(icon),
+                contentDescription = null,
+                colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(tint),
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = title,
+            fontSize = dims.label,
+            color = p.text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }

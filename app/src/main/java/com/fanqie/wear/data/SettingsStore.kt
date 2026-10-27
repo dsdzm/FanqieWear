@@ -67,6 +67,8 @@ data class AppSettings(
     val ttsOnlineVoice: String = "zh-CN-XiaoxiaoNeural",
     /** 被关闭的声明式站点 key，逗号分隔 */
     val disabledSites: String = "",
+    /** 首页用双列宫格 */
+    val homeGrid: Boolean = true,
 
     /** 滚动/点击震动反馈 */
     val haptics: Boolean = true,
@@ -113,6 +115,7 @@ class SettingsStore(context: Context) {
         ttsVoice = sp.getString("ttsVoice", "cmn") ?: "cmn",
         ttsOnlineVoice = sp.getString("ttsOnlineVoice", "zh-CN-XiaoxiaoNeural") ?: "zh-CN-XiaoxiaoNeural",
         disabledSites = sp.getString("disabledSites", "") ?: "",
+        homeGrid = sp.getBoolean("homeGrid", true),
         haptics = sp.getBoolean("haptics", true),
         edgeBack = sp.getBoolean("edgeBack", true),
     )
@@ -150,6 +153,7 @@ class SettingsStore(context: Context) {
             .putString("ttsVoice", n.ttsVoice)
             .putString("ttsOnlineVoice", n.ttsOnlineVoice)
             .putString("disabledSites", n.disabledSites)
+            .putBoolean("homeGrid", n.homeGrid)
             .putBoolean("haptics", n.haptics)
             .putBoolean("edgeBack", n.edgeBack)
             .apply()

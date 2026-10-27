@@ -99,6 +99,10 @@ class TtsPlayer(private val context: Context) {
 
     @Volatile private var stopRequested = false
     @Volatile private var nextChapterId: String? = null
+    @Volatile private var prevChapterId: String? = null
+
+    /** 当前书来自哪个源，用于自动续章/切换章节（播放器自己取，不依赖阅读页是否在前台） */
+    @Volatile private var bookSourceKey: String = ""
 
     /** 续播位置：暂停时记住"第几块 + 块内第几个采样" */
     @Volatile private var resumeChunk = -1
@@ -152,10 +156,14 @@ class TtsPlayer(private val context: Context) {
         title: String,
         text: String,
         nextId: String? = null,
+        prevId: String? = null,
+        sourceKey: String = "",
     ) {
         val chunks = splitChunks(text, if (useSystemVoice()) 90 else 220)
         TtsLog.i("load", "《$title》切成 ${chunks.size} 块")
         nextChapterId = nextId
+        prevChapterId = prevId
+        if (sourceKey.isNotBlank()) bookSourceKey = sourceKey
         resumeChunk = -1
         resumeSample = 0
         _state.value = State(
@@ -323,6 +331,49 @@ class TtsPlayer(private val context: Context) {
         TtsService.stop(context)
     }
 
+    /** 取某一章的正文（播放器自己走书源，阅读页不在前台也能续章） */
+    private suspend fun fetchChapter(chapterId: String): Fetched? = runCatching {
+        val app = context.applicationContext as FanqieApp
+        val api = app.sources.of(com.fanqie.wear.data.Source.of(bookSourceKey))
+        val r = api.chapter(_state.value.bookId, chapterId)
+        Fetched(chapterId, r.title, r.content, r.nextId).also { prevChapterId = r.prevId }
+    }.getOrNull()
+
+    /** 听书页：下一章 */
+    fun nextChapter() {
+        val id = nextChapterId ?: return
+        switchChapter(id)
+    }
+
+    /** 听书页：上一章 */
+    fun prevChapter() {
+        val id = prevChapterId ?: return
+        switchChapter(id)
+    }
+
+    private fun switchChapter(chapterId: String) {
+        val wasPlaying = _state.value.playing
+        stopRequested = true
+        job?.cancel()
+        job = null
+        runCatching { systemTts.stop() }
+        stopRequested = false
+        _state.value = _state.value.copy(playing = false)
+        job = scope.launch {
+            try {
+                val f = fetchChapter(chapterId) ?: run {
+                    _state.value = _state.value.copy(error = "这一章取不到正文")
+                    return@launch
+                }
+                load(_state.value.bookId, f.chapterId, f.title, f.text, f.nextId, prevChapterId, bookSourceKey)
+                if (wasPlaying || true) play()
+            } catch (c: CancellationException) {
+            } catch (t: Throwable) {
+                TtsLog.e("switch", t)
+            }
+        }
+    }
+
     /** 自检用完就回收，别留一根空转线程 */
     fun close() {
         stopRequested = true
@@ -380,14 +431,14 @@ class TtsPlayer(private val context: Context) {
                 TtsLog.i("play", "本章读完（未开自动续播）")
                 break
             }
-            val src = chapterSource
             val nid = nextChapterId
-            if (src == null || nid.isNullOrBlank()) {
+            if (nid.isNullOrBlank()) {
                 TtsLog.i("play", "本章读完（没有下一章）")
                 break
             }
             TtsLog.i("autoNext", "取下一章 $nid")
-            val next = runCatching { src.fetch(nid) }.getOrNull()
+            val src = chapterSource
+            val next = if (src != null) runCatching { src.fetch(nid) }.getOrNull() else fetchChapter(nid)
             if (stopRequested) break
             if (next == null || next.text.isBlank()) {
                 TtsLog.w("autoNext", "下一章取不到正文，停在这里")
