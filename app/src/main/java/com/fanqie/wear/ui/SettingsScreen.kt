@@ -555,9 +555,6 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                         }
                     }
                     item {
-                        SwitchCard("边缘滑动返回", "从左边缘右滑回到上一页", s.edgeBack) {
-                            app.settings.update { it.copy(edgeBack = it.edgeBack.not()) }
-                        }
                     }
                     item {
                         Text(

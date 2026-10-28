@@ -6,5 +6,13 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowNoTitle">true</item>
+        <!--
+            关掉手表系统的「整窗右滑关闭」。
+
+            Wear OS 默认会把 Activity 窗口做成可以右滑 dismiss，手指一动整个窗口就跟着走 ——
+            看起来就像"应用被拖着滑出去"。应用内自己是多页面栈，返回各页有按钮、
+            系统返回键也接管了，所以这里必须关掉，否则任何应用内转场都会被它盖住。
+        -->
+        <item name="android:windowSwipeToDismiss">false</item>
     </style>
 </resources>

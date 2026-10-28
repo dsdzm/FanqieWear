@@ -13,7 +13,12 @@
     <uses-feature android:name="android.hardware.type.watch" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
+    <!--
+        显式关掉预测式返回：targetSdk 34 下部分 ROM 会默认开启，
+        开启后系统会在返回手势时亲自对窗口做动画，应用内的转场会被盖住。
+    -->
     <application
+        android:enableOnBackInvokedCallback="false"
         android:name=".FanqieApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"

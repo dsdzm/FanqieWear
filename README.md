@@ -171,7 +171,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 23 / versionName 2.6.1
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 24 / versionName 2.6.2
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -494,3 +494,18 @@ alert，页面里一条结果都没有 —— 这就是"第二次搜不到"的�
   一次失败就永久失效
 - 会话获取失败不阻断搜索（娜娜本来就不依赖 Cookie），只是降级
 - 设置 → 网络与书源 → 检测书源可用性，现在会显示会话状态（`会话 N 个 Cookie`）
+
+## 2.6.2：删掉自写的右滑转场，改用系统开关
+
+参考教程（BV1NV4y1t7qK）的做法，真相是：**"整个应用窗口跟着手指右滑"根本不是我写的代码**，
+而是 Wear OS 系统级的 swipe-to-dismiss —— 系统会把整个 Activity 窗口做成可以右滑关闭，
+手指一动窗口就跟着走。应用内再写一层跟手位移，只会和系统手势互相打架。
+
+所以：
+
+- `themes.xml` 加 `<item name="android:windowSwipeToDismiss">false</item>`，关掉系统整窗右滑关闭
+- manifest 显式 `android:enableOnBackInvokedCallback="false"`，避免部分 ROM 用预测式返回
+  亲自给窗口做动画
+- **删除** `NavMotion.kt`（缩放 + PixelCopy 快照那套）、`Modifier.navSwipeBack` 手势、
+  设置里的「边缘滑动返回」开关
+- 返回只留两条：页面自带的返回按钮、系统返回键（`BackHandler`）
