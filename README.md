@@ -171,7 +171,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 22 / versionName 2.6.0
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 23 / versionName 2.6.1
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -468,3 +468,29 @@ eSpeak 自带 104 个共振峰变体，实测同一句话基频差异明显：
 
 `"link": "@href"` 这种"取元素自己的属性"的写法一直是坏的 —— 解析时 css 部分为空，
 `selectFirst("")` 抛异常被吞掉，**所有声明式站点的目录都是空的**。现在 css 为空时落在元素本身。
+
+## 2.6.1：娜娜阅读搜索前自动建会话 + 限流排队
+
+上一版写的"搜索需先取 Cookie"其实**说错了**。实测四种组合（无 Cookie / 仅 Referer /
+仅 Cookie / 两者都有）都拿到 101 条结果，首页根本不下 Cookie —— 真正卡人的是别的东西：
+
+```
+第 1 次搜索：100 条
+第 2 次搜索（立刻）：HTTP 200，69 字节，内容只有 <script>alert("搜索间隔: 10 秒")</script>
+第 3 次搜索（立刻）：同上
+等 11 秒后再搜：100 条
+```
+
+站点用 `ss_search_delay` 这个 Cookie 记录"上次搜索时间"，同一会话 10 秒内再搜就只回那行
+alert，页面里一条结果都没有 —— 这就是"第二次搜不到"的真因。
+
+改动：
+
+- `SearchRule.intervalMs`：站点最小搜索间隔。娜娜填 10500ms，客户端自己排队，
+  窗口内重复搜同一个词直接复用上次结果，不浪费配额
+- 真被限流时（收到那行 alert）等一会儿自动重试一次，仍失败才给出明确提示
+- 会话改成**搜索前显式建立**：`ensureSession()` 成功后记时间（30 分钟内复用），
+  失败不再像以前那样"置位后永不重试"——旧代码 `warmedUp = true` 写在请求之前，
+  一次失败就永久失效
+- 会话获取失败不阻断搜索（娜娜本来就不依赖 Cookie），只是降级
+- 设置 → 网络与书源 → 检测书源可用性，现在会显示会话状态（`会话 N 个 Cookie`）

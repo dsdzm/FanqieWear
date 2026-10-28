@@ -9,6 +9,7 @@ import com.fanqie.wear.data.ChapterContent
 import com.fanqie.wear.data.Source
 import com.fanqie.wear.data.SourceCapability
 import com.fanqie.wear.data.SourceShelf
+import kotlinx.coroutines.delay
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
@@ -58,6 +59,14 @@ data class SearchRule(
     val title: String,
     val link: String,
     val author: String = "",
+    /**
+     * 站点要求两次搜索之间的最小间隔（毫秒）。
+     *
+     * 娜娜这类站把"搜索间隔 10 秒"记在 `ss_search_delay` cookie 里，
+     * 连续搜索时直接返回一行 `alert("搜索间隔: 10 秒")`，页面里一条结果都没有。
+     * 填了这里的值，客户端就会自己排好队，不再白搜一次。
+     */
+    val intervalMs: Long = 0,
 )
 
 @Serializable
@@ -151,7 +160,56 @@ class DeclarativeSource(
             return listOf(runCatching { detail(hit) }.getOrThrow().book)
         }
         if (page > 0) return emptyList()
-        val doc = fetch(absolute(r.path.replace("{q}", enc(keyword))), r.method, r.body.replace("{q}", enc(keyword)))
+
+        // 站点限流：窗口内重复搜同一个词直接给上次的结果
+        val interval = r.intervalMs
+        if (interval > 0) {
+            val since = System.currentTimeMillis() - lastSearchAt
+            if (lastSearchAt > 0 && since < interval) {
+                searchCache[keyword]?.let {
+                    onLog("${rule.name} 距上次搜索 ${since / 1000}s，直接复用「$keyword」的结果")
+                    return it
+                }
+                val wait = interval - since
+                if (wait > MAX_BLOCK_MS) {
+                    throw ApiException("${rule.name} 要求搜索间隔 ${interval / 1000} 秒，请稍后再试")
+                }
+                delay(wait)
+            }
+        }
+
+        val url = absolute(r.path.replace("{q}", enc(keyword)))
+        val form = r.body.replace("{q}", enc(keyword))
+        var doc = fetch(url, r.method, form)
+        if (isThrottled(doc)) {
+            // 服务端回了 alert("搜索间隔: 10 秒")，等一会儿再来一次
+            val wait = (interval.takeIf { it > 0 } ?: 10_000L).coerceAtMost(MAX_BLOCK_MS)
+            onLog("${rule.name} 触发搜索间隔限制，等待 ${wait}ms 后重试")
+            delay(wait)
+            doc = fetch(url, r.method, form)
+            if (isThrottled(doc)) throw ApiException("${rule.name} 被限流了，请过 10 秒再试")
+        }
+        lastSearchAt = System.currentTimeMillis()
+
+        var out = parseSearchList(doc, r)
+        // 只有"靠会话"的站点才值得重建重试；限流型站点再打一次只会重置它的等待窗口
+        if (out.isEmpty() && rule.warmup.isNotBlank() && interval == 0L) {
+            ensureSession(force = true)
+            val retryDoc = fetchRaw(url, r.method, form)
+            if (!isThrottled(retryDoc)) {
+                out = parseSearchList(retryDoc, r)
+                if (out.isNotEmpty()) onLog("${rule.name} 重建会话后搜到 ${out.size} 条")
+            }
+        }
+        if (out.isNotEmpty()) {
+            if (searchCache.size > 12) searchCache.clear()
+            searchCache[keyword] = out
+        }
+        onLog("${rule.name} 搜索「$keyword」得到 ${out.size} 条")
+        return out
+    }
+
+    private fun parseSearchList(doc: Document, r: SearchRule): List<Book> {
         val out = ArrayList<Book>()
         for (el in doc.select(r.list)) {
             val a = pick(el, r.link) ?: continue
@@ -167,8 +225,14 @@ class DeclarativeSource(
             )
             if (out.size >= 30) break
         }
-        onLog("${rule.name} 搜索「$keyword」得到 ${out.size} 条")
         return out
+    }
+
+    /** 限流页没有正文，只有一行 `alert("搜索间隔: 10 秒")` */
+    private fun isThrottled(doc: Document): Boolean {
+        val html = doc.outerHtml()
+        if (html.length > 2000) return false
+        return html.contains("搜索间隔") || html.contains("window.history.go(-1)")
     }
 
     /** 从「纯数字书号」或「站点书籍链接」里取出 id；不是这两种就返回 null */
@@ -294,18 +358,30 @@ class DeclarativeSource(
     }
 
     override suspend fun ping(): String {
-        val doc = fetch(rule.base)
-        val ok = doc.title().isNotBlank()
-        return if (ok) "${rule.name} 可访问：${doc.title().take(20)}" else "${rule.name} 页面异常"
+        ensureSession()
+        val doc = runCatching { fetchRaw(rule.base) }.getOrElse {
+            throw ApiException("${rule.name} 连不上：${it.message?.take(30)}")
+        }
+        if (doc.title().isBlank()) throw ApiException("${rule.name} 页面异常")
+        val session = if (cookieJar.isEmpty()) "无会话" else "会话 ${cookieJar.size} 个 Cookie"
+        return "${rule.name} 可访问 · $session"
     }
 
     // ---------------- 内部 ----------------
 
     private val catalogCache = HashMap<String, List<Chapter>>()
 
-    /** 会话 Cookie：有些站搜索要先访问首页拿到 cookie 才给结果 */
+    /** 会话 Cookie：站点把限流、会话状态都存在这里，必须跨请求带着 */
     private val cookieJar = LinkedHashMap<String, String>()
-    private var warmedUp = false
+
+    /** 上次真正发起搜索的时间，用来遵守站点的最小搜索间隔 */
+    @Volatile private var lastSearchAt = 0L
+
+    /** 同一关键词的最近结果：节流窗口内重复搜同一个词直接复用，不浪费一次配额 */
+    private val searchCache = HashMap<String, List<Book>>()
+
+    /** 会话建立时间；0 表示还没建 */
+    @Volatile private var sessionAt = 0L
 
     private fun enc(s: String): String = java.net.URLEncoder.encode(s, "UTF-8")
 
@@ -354,11 +430,32 @@ class DeclarativeSource(
         return null
     }
 
-    private fun fetch(url: String, method: String = "GET", body: String = ""): Document {
-        if (!warmedUp && rule.warmup.isNotBlank()) {
-            warmedUp = true
-            runCatching { fetch(absolute(rule.warmup)) }
+    /**
+     * 建会话：先访问首页把 Cookie 收进罐子（限流、会话状态都在里面）。
+     *
+     * 之前的写法是"先把 warmedUp 置 true 再请求"，一旦这次请求失败就再也不会重试，
+     * 后面所有搜索都带着空罐子跑。现在改成成功才记时间，失败可以直接重建。
+     */
+    private fun ensureSession(force: Boolean = false): Boolean {
+        if (rule.warmup.isBlank()) return true
+        if (!force && sessionAt > 0 && System.currentTimeMillis() - sessionAt < SESSION_TTL_MS) return true
+        return runCatching {
+            fetchRaw(absolute(rule.warmup))
+            sessionAt = System.currentTimeMillis()
+            onLog("${rule.name} 会话就绪：${cookieJar.size} 个 Cookie")
+            true
+        }.getOrElse {
+            onLog("${rule.name} 会话获取失败：${it.message?.take(30)}")
+            false
         }
+    }
+
+    private fun fetch(url: String, method: String = "GET", body: String = ""): Document {
+        ensureSession()
+        return fetchRaw(url, method, body)
+    }
+
+    private fun fetchRaw(url: String, method: String = "GET", body: String = ""): Document {
         val conn = Jsoup.connect(url)
             .userAgent(UA)
             .header("Accept-Language", "zh-CN,zh;q=0.9")
@@ -410,6 +507,12 @@ class DeclarativeSource(
     }
 
     companion object {
+        /** 会话有效期：过期内重新访问首页 */
+        private const val SESSION_TTL_MS = 30 * 60 * 1000L
+
+        /** 最多愿意为一个站点等多久（聚合搜索单站超时 9 秒，别把整体拖死） */
+        private const val MAX_BLOCK_MS = 3000L
+
         const val UA =
             "Mozilla/5.0 (Linux; Android 12; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/120.0.0.0 Mobile Safari/537.36"
