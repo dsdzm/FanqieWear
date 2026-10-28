@@ -171,7 +171,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 21 / versionName 2.5.0
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 22 / versionName 2.6.0
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -414,3 +414,57 @@ eSpeak 自带 104 个共振峰变体，实测同一句话基频差异明显：
 - **关于页**：作者 东山de字幕 · 2332184782@qq.com。
 - **站点**：新增「娜娜阅读」（nana00.com），并给声明式书源加了 Cookie 罐和 warmup，
   这类"搜索前必须先拿会话"的 PHP 站终于能用了。
+
+## 2.6.0：右滑转场重做 + 两个站点的接口逆向
+
+### ① 右滑返回不再是"整窗拖动"
+
+旧实现把 `translationX` 挂在整屏根布局上、下层又没有内容，所以在定制 ROM 的手表上看起来
+就是**系统在拖动整个应用窗口**。
+
+现在按轻舟/watchOS 的做法：上层页面**缩小 + 轻微右移**，下面画的是"返回后看到的页面"。
+实现要点：
+
+- 压栈时用 `PixelCopy` 抓一张当前窗口快照，存进与导航栈对齐的 `belowStack`；
+- 返回时先画这张快照（缩放 0.94→1、亮度 0.7→1），上层页面缩到 0.52 并淡出，动画结束才真正出栈；
+- **不用 Compose 的 GraphicsLayer 录制**：那等于给整页加一层离屏纹理，每帧多渲染一遍，
+  手表上会直接吃掉帧率；PixelCopy 只在真正要转场时抓一次，平时零开销；
+- 动画值全部在 `graphicsLayer { }` 里读，拖动时只重绘、不触发重组；
+- 抓不到快照（窗口未就绪/ROM 限制）时退化成只露背景，不会崩。
+
+### ② nana00（娜娜阅读）接口
+
+| 环节 | 实际接口 |
+|---|---|
+| 搜索 | `POST /search/`，表单 `type=articlename&searchkey=书名`，**必须先访问首页拿 Cookie**，否则返回首页 HTML |
+| 列表 | `ul.txt-list li` → `span.s2 a`（书名+链接）、`span.s4`（作者） |
+| 详情 | `h1.novel_title`、`.info .fix p:contains(作者)`、`#m_desc`、`.imgbox img@src` |
+| 目录 | `ul.section-list li a`，**最新章节在前**，需要反转 |
+| 正文 | `div#content`；一章可能被拆成 `xxx_2.html` 多页 |
+| 翻页 | 正文页自带 `a#prev_url` / `a#next_url`，优先用它而不是目录顺序 |
+
+注意：这个站的书页只列**最新 100 章左右**（317 章的书只给 99~317），前面的章节要靠
+"上一章"一页页退。所以规则里把翻页交给页面自己的链接，比按目录推算可靠。
+
+### ③ 7novel（七小说）接口
+
+| 环节 | 实际接口 |
+|---|---|
+| 搜索 | **站内搜索已失效**：`/cn/books?q=` 任何参数都返回同一个空列表（656870 字节），真实 Chromium 里按回车也是 0 条结果，用排行榜里存在的书名搜同样为 0 |
+| 详情 | `/cn/books/{id}`，`meta[property=og:title]`、`meta[name=description]`、`img.object-cover@src` |
+| 目录 | 页面 `x-data` 里内嵌 `chapters:[{id,title},…]`，**整本 243 章都在**，倒序 |
+| 正文 | `/cn/chapters/{id}`，`div.prose`，服务端渲染 |
+
+因为搜索是服务端坏的（不是我们抓不到），7novel 只能按**书号或书籍链接**阅读：
+在搜索框里贴 `7409263381435124798` 或 `https://7novel.com/cn/books/7409263381435124798` 就能打开。
+
+为此给声明式书源加了三个能力：
+
+- `catalog.json`：目录取自页面内嵌 JSON 数组（`list` 填数组前的标记如 `chapters:`，`link` 填 id 模板）
+- `catalog.reverse`：倒序目录
+- `directSearch`：没有关键词搜索、但可以按书号/链接直接读
+
+### ④ 顺手修掉的一个真 bug
+
+`"link": "@href"` 这种"取元素自己的属性"的写法一直是坏的 —— 解析时 css 部分为空，
+`selectFirst("")` 抛异常被吞掉，**所有声明式站点的目录都是空的**。现在 css 为空时落在元素本身。

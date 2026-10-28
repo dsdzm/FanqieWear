@@ -2,7 +2,6 @@ package com.fanqie.wear.ui
 
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -12,12 +11,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
@@ -80,58 +77,6 @@ fun WearList(
         autoCentering = AutoCenteringParams(),
         content = content,
     )
-}
-
-/**
- * 左边缘右滑返回，和系统 Wear 手势一致：只有从边缘 28dp 内起手才接管，
- * 竖直滚动不受影响；滑过屏宽 28% 就触发返回。
- */
-@Composable
-fun Modifier.edgeSwipeBack(enabled: Boolean, onBack: () -> Unit): Modifier {
-    if (!enabled) return this
-    val density = LocalDensity.current
-    val widthPx = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
-    val edgePx = with(density) { 44.dp.toPx() }
-    val scope = rememberCoroutineScope()
-    val dragX = remember { mutableFloatStateOf(0f) }
-
-    return this
-        .graphicsLayer { translationX = dragX.floatValue }
-        .pointerInput(enabled, widthPx) {
-            var fromEdge = false
-            detectHorizontalDragGestures(
-                onDragStart = { start -> fromEdge = start.x <= edgePx },
-                onDragEnd = {
-                    if (fromEdge) {
-                        val target = if (dragX.floatValue > widthPx * 0.22f) widthPx else 0f
-                        scope.launch {
-                            animate(dragX.floatValue, target, animationSpec = tween(180)) { v, _ ->
-                                dragX.floatValue = v
-                            }
-                            if (target > 0f) {
-                                onBack()
-                                dragX.floatValue = 0f
-                            }
-                        }
-                    }
-                    fromEdge = false
-                },
-                onDragCancel = {
-                    fromEdge = false
-                    scope.launch {
-                        animate(dragX.floatValue, 0f, animationSpec = tween(150)) { v, _ ->
-                            dragX.floatValue = v
-                        }
-                    }
-                },
-                onHorizontalDrag = { change, drag ->
-                    if (fromEdge) {
-                        change.consume()
-                        dragX.floatValue = (dragX.floatValue + drag).coerceIn(0f, widthPx)
-                    }
-                },
-            )
-        }
 }
 
 /** 时间文字：跟随调色板，纸白主题下不会白字白底 */

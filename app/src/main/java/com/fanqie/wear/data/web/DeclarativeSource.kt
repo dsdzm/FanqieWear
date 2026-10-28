@@ -11,6 +11,10 @@ import com.fanqie.wear.data.SourceCapability
 import com.fanqie.wear.data.SourceShelf
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import android.util.Log
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -33,6 +37,8 @@ data class SiteRule(
     val note: String = "",
     /** 搜索规则，没有就表示不支持搜索 */
     val search: SearchRule? = null,
+    /** 没有关键词搜索、但可以贴书号/链接直接读（7novel 就是这样） */
+    val directSearch: Boolean = false,
     /** 先访问这个路径拿 Cookie（部分站点搜索必须先有会话） */
     val warmup: String = "",
     val detail: DetailRule,
@@ -58,6 +64,8 @@ data class SearchRule(
 data class DetailRule(
     val path: String,
     val title: String = "h1",
+    /** 站点标题带尾巴（如 `书名 - 7novel.com 七小说`）时，按这个后缀裁掉 */
+    val titleTrim: String = "",
     val author: String = "",
     val intro: String = "",
     val cover: String = "",
@@ -69,6 +77,14 @@ data class CatalogRule(
     val list: String,
     val title: String = "",
     val link: String = "@href",
+    /**
+     * 目录不是 HTML 列表、而是页面里内嵌的 JSON 数组时置 true。
+     * 此时 [list] 是数组前的标记（如 `chapters:[`），[link] 是 id 模板（如 `cn/chapters/{id}`）。
+     * 7novel 这类 Alpine/Livewire 站把整本目录塞在 x-data 里，CSS 选不到。
+     */
+    val json: Boolean = false,
+    /** 站点目录是"最新章节在前"，置 true 反转为正序 */
+    val reverse: Boolean = false,
 )
 
 @Serializable
@@ -76,6 +92,14 @@ data class ChapterRule(
     val path: String = "{itemId}",
     val content: String,
     val remove: List<String> = emptyList(),
+    /**
+     * 正文页自带的上一章 / 下一章链接。
+     *
+     * 有这两条就优先用页面里的，不再依赖目录里的顺序 —— 有些站点的目录只列最新 100 章、
+     * 或者一章被拆成 `xxx_2.html` 多页，靠目录推 next 会走丢。
+     */
+    val prev: String = "",
+    val next: String = "",
 )
 
 /** 站点配置集合，放在 assets/sources/sites.json，也可以被云端书源覆盖 */
@@ -109,7 +133,7 @@ class DeclarativeSource(
     override val displayName: String = rule.name
     override val desc: String = rule.note.ifBlank { "声明式书源" }
     override val capability: SourceCapability = SourceCapability(
-        search = rule.search != null,
+        search = rule.search != null || rule.directSearch,
         browse = false,
         chapter = true,
         login = false,
@@ -120,7 +144,12 @@ class DeclarativeSource(
     val siteKey: String get() = rule.key
 
     override suspend fun search(keyword: String, page: Int): List<Book> {
-        val r = rule.search ?: throw ApiException("${rule.name} 不支持搜索")
+        val r = rule.search
+        if (r == null) {
+            // 没有搜索规则的站点（如 7novel）：允许直接贴书号或书籍链接打开
+            val hit = directId(keyword) ?: throw ApiException("${rule.name} 不支持关键词搜索")
+            return listOf(runCatching { detail(hit) }.getOrThrow().book)
+        }
         if (page > 0) return emptyList()
         val doc = fetch(absolute(r.path.replace("{q}", enc(keyword))), r.method, r.body.replace("{q}", enc(keyword)))
         val out = ArrayList<Book>()
@@ -132,7 +161,7 @@ class DeclarativeSource(
                 Book(
                     id = normalizeId(a),
                     title = title,
-                    author = pick(el, r.author)?.trim().orEmpty(),
+                    author = pick(el, r.author)?.let(::cleanAuthor).orEmpty(),
                     source = Source.AGG,
                 ),
             )
@@ -142,15 +171,26 @@ class DeclarativeSource(
         return out
     }
 
+    /** 从「纯数字书号」或「站点书籍链接」里取出 id；不是这两种就返回 null */
+    private fun directId(raw: String): String? {
+        val q = raw.trim()
+        if (q.matches(Regex("\\d{6,}"))) return q
+        if (!q.startsWith("http")) return null
+        val m = Regex("/(\\d{6,})").find(q) ?: return null
+        return m.groupValues[1]
+    }
+
     override suspend fun browse(shelfId: String, page: Int): List<Book> = emptyList()
 
     override suspend fun detail(bookId: String): BookDetail {
         val doc = fetch(absolute(fill(rule.detail.path, bookId)))
-        val title = pick(doc, rule.detail.title)?.trim().orEmpty().ifBlank { bookId }
+        val rawTitle = pick(doc, rule.detail.title)?.trim().orEmpty()
+        val title = (if (rule.detail.titleTrim.isNotBlank()) rawTitle.substringBefore(rule.detail.titleTrim) else rawTitle)
+            .trim().ifBlank { bookId }
         val book = Book(
             id = bookId,
             title = title,
-            author = pick(doc, rule.detail.author)?.trim().orEmpty(),
+            author = pick(doc, rule.detail.author)?.let(::cleanAuthor).orEmpty(),
             intro = pick(doc, rule.detail.intro)?.trim().orEmpty(),
             cover = pick(doc, rule.detail.cover)?.let { absolute(it) },
             source = Source.AGG,
@@ -161,6 +201,13 @@ class DeclarativeSource(
 
     override suspend fun catalog(bookId: String): List<Chapter> {
         val doc = fetch(absolute(fill(rule.catalog.path, bookId)))
+        val list = if (rule.catalog.json) parseJsonCatalog(doc) else parseCssCatalog(doc)
+        if (rule.catalog.reverse) list.reverse()
+        catalogCache[bookId] = list
+        return list
+    }
+
+    private fun parseCssCatalog(doc: Document): ArrayList<Chapter> {
         val list = ArrayList<Chapter>()
         for (el in doc.select(rule.catalog.list)) {
             val href = pick(el, rule.catalog.link) ?: continue
@@ -168,8 +215,57 @@ class DeclarativeSource(
             if (title.isBlank()) continue
             list.add(Chapter(itemId = normalizeId(href), title = title))
         }
-        catalogCache[bookId] = list
         return list
+    }
+
+    /** 从整页 HTML 里抠出内嵌的 `[{id,title},...]` 数组 */
+    private fun parseJsonCatalog(doc: Document): ArrayList<Chapter> {
+        val html = doc.outerHtml()
+        val marker = rule.catalog.list
+        val at = html.indexOf(marker)
+        if (at < 0) throw ApiException("${rule.name} 没找到目录数据（站点可能改版了）")
+        val from = html.indexOf('[', at + marker.length)
+        val to = matchBracket(html, from)
+        if (from < 0 || to < 0) throw ApiException("${rule.name} 目录数据不完整")
+        val arr = runCatching {
+            Json.parseToJsonElement(html.substring(from, to + 1)).jsonArray
+        }.getOrElse { throw ApiException("${rule.name} 目录解析失败：${it.message?.take(30)}") }
+
+        val out = ArrayList<Chapter>(arr.size)
+        for (e in arr) {
+            val obj = runCatching { e.jsonObject }.getOrNull() ?: continue
+            val id = obj["id"]?.jsonPrimitive?.contentOrNull ?: continue
+            val title = obj["title"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+            if (title.isBlank()) continue
+            val item = rule.catalog.link.replace("{id}", id).replace("{num}", id)
+            out.add(Chapter(itemId = item.trim('/'), title = title))
+        }
+        return out
+    }
+
+    /** 从 '[' 开始找配对的 ']'，跳过字符串里的括号 */
+    private fun matchBracket(s: String, start: Int): Int {
+        if (start < 0 || start >= s.length || s[start] != '[') return -1
+        var depth = 0
+        var inStr = false
+        var esc = false
+        for (i in start until s.length) {
+            val c = s[i]
+            if (inStr) {
+                when {
+                    esc -> esc = false
+                    c == '\\' -> esc = true
+                    c == '"' -> inStr = false
+                }
+                continue
+            }
+            when (c) {
+                '"' -> inStr = true
+                '[' -> depth++
+                ']' -> { depth--; if (depth == 0) return i }
+            }
+        }
+        return -1
     }
 
     override suspend fun chapter(bookId: String, itemId: String): ChapterContent {
@@ -182,13 +278,18 @@ class DeclarativeSource(
 
         val list = catalogCache[bookId] ?: runCatching { catalog(bookId) }.getOrDefault(emptyList())
         val idx = list.indexOfFirst { it.itemId == itemId }
+
+        // 优先用正文页自带的上一章/下一章；目录只列最新 N 章、或一章拆多页时更靠得住
+        val pagePrev = linkId(doc, rule.chapter.prev)
+        val pageNext = linkId(doc, rule.chapter.next)
+
         return ChapterContent(
             itemId = itemId,
             bookId = bookId,
             title = list.getOrNull(idx)?.title ?: "",
             content = text,
-            prevId = if (idx > 0) list[idx - 1].itemId else null,
-            nextId = if (idx >= 0 && idx < list.lastIndex) list[idx + 1].itemId else null,
+            prevId = pagePrev ?: if (idx > 0) list[idx - 1].itemId else null,
+            nextId = pageNext ?: if (idx >= 0 && idx < list.lastIndex) list[idx + 1].itemId else null,
         )
     }
 
@@ -225,6 +326,19 @@ class DeclarativeSource(
         .substringBefore('?')
         .trim('/')
 
+    /** 取页面里的上一章/下一章链接；指向书页（以 / 结尾）的当成"没有" */
+    private fun linkId(doc: Document, selector: String): String? {
+        if (selector.isBlank()) return null
+        val href = pick(doc, selector) ?: return null
+        if (href.endsWith("/") || href.isBlank()) return null
+        val id = normalizeId(href)
+        return id.ifBlank { null }
+    }
+
+    /** 「作者：xxx」「作 者: xxx」「作者 xxx」都归一成名字 */
+    private fun cleanAuthor(raw: String): String =
+        raw.replace(Regex("^作\\s*者\\s*[：:]?\\s*"), "").trim()
+
     private fun pick(scope: Element, selector: String): String? {
         if (selector.isBlank()) return null
         for (one in selector.split(",")) {
@@ -232,7 +346,8 @@ class DeclarativeSource(
             if (s.isEmpty()) continue
             val at = s.substringAfterLast('@', "")
             val css = if (at.isEmpty()) s else s.substringBeforeLast('@')
-            val el = runCatching { scope.selectFirst(css) }.getOrNull() ?: continue
+            // "@href" 这种是取元素自己的属性，css 为空时要落在 scope 本身
+            val el = if (css.isBlank()) scope else (runCatching { scope.selectFirst(css) }.getOrNull() ?: continue)
             val v = if (at.isEmpty()) el.text() else el.attr(at)
             if (v.isNotBlank()) return v.trim()
         }

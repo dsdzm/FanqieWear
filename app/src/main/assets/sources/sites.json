@@ -159,12 +159,16 @@
       },
       "detail": {
         "path": "/{id}/",
-        "title": "h1"
+        "title": "h1.novel_title, h1",
+        "author": ".info .fix p:contains(作者)",
+        "intro": "#m_desc, .desc",
+        "cover": ".imgbox img@src"
       },
       "catalog": {
         "path": "/{id}/",
         "list": "ul.section-list li a",
-        "link": "@href"
+        "link": "@href",
+        "reverse": true
       },
       "chapter": {
         "path": "{itemId}",
@@ -174,6 +178,37 @@
           "style",
           "div[align=center]",
           ".bottem"
+        ],
+        "prev": "a#prev_url@href",
+        "next": "a#next_url@href"
+      }
+    },
+    {
+      "key": "seven",
+      "name": "七小说 7novel",
+      "base": "https://7novel.com",
+      "note": "站内搜索已失效 · 可贴书号/链接直接读",
+      "directSearch": true,
+      "detail": {
+        "path": "/cn/books/{id}",
+        "title": "meta[property=og:title]@content",
+        "titleTrim": " - 7novel.com",
+        "intro": "meta[name=description]@content",
+        "cover": "img.object-cover@src"
+      },
+      "catalog": {
+        "path": "/cn/books/{id}",
+        "list": "chapters:",
+        "json": true,
+        "link": "cn/chapters/{id}",
+        "reverse": true
+      },
+      "chapter": {
+        "path": "{itemId}",
+        "content": "div.prose",
+        "remove": [
+          "script",
+          "style"
         ]
       }
     }
