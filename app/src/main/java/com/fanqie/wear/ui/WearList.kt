@@ -91,7 +91,7 @@ fun Modifier.edgeSwipeBack(enabled: Boolean, onBack: () -> Unit): Modifier {
     if (!enabled) return this
     val density = LocalDensity.current
     val widthPx = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
-    val edgePx = with(density) { 28.dp.toPx() }
+    val edgePx = with(density) { 44.dp.toPx() }
     val scope = rememberCoroutineScope()
     val dragX = remember { mutableFloatStateOf(0f) }
 
@@ -103,7 +103,7 @@ fun Modifier.edgeSwipeBack(enabled: Boolean, onBack: () -> Unit): Modifier {
                 onDragStart = { start -> fromEdge = start.x <= edgePx },
                 onDragEnd = {
                     if (fromEdge) {
-                        val target = if (dragX.floatValue > widthPx * 0.28f) widthPx else 0f
+                        val target = if (dragX.floatValue > widthPx * 0.22f) widthPx else 0f
                         scope.launch {
                             animate(dragX.floatValue, target, animationSpec = tween(180)) { v, _ ->
                                 dragX.floatValue = v

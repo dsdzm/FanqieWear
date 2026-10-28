@@ -90,6 +90,7 @@ fun HistoryScreen(onBack: () -> Unit, onOpen: (String, String, String, Source) -
                         },
                         fontSize = dims.titleSmall,
                         fontWeight = FontWeight.Medium,
+                        color = LocalPalette.current.text,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )

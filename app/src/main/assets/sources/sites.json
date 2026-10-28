@@ -30,7 +30,12 @@
       "chapter": {
         "path": "{itemId}",
         "content": "#txt",
-        "remove": ["script", "style", ".ads", "div[align=center]"]
+        "remove": [
+          "script",
+          "style",
+          ".ads",
+          "div[align=center]"
+        ]
       }
     },
     {
@@ -60,7 +65,12 @@
       "chapter": {
         "path": "{itemId}",
         "content": "#content, #chaptercontent",
-        "remove": ["script", "style", ".bottem", "div[align=center]"]
+        "remove": [
+          "script",
+          "style",
+          ".bottem",
+          "div[align=center]"
+        ]
       }
     },
     {
@@ -90,7 +100,12 @@
       "chapter": {
         "path": "{itemId}",
         "content": "#content, #booktxt",
-        "remove": ["script", "style", "div[align=center]", ".bottem"]
+        "remove": [
+          "script",
+          "style",
+          "div[align=center]",
+          ".bottem"
+        ]
       }
     },
     {
@@ -120,7 +135,46 @@
       "chapter": {
         "path": "{itemId}",
         "content": "#content",
-        "remove": ["script", "style", "div[align=center]"]
+        "remove": [
+          "script",
+          "style",
+          "div[align=center]"
+        ]
+      }
+    },
+    {
+      "key": "nana00",
+      "name": "娜娜阅读",
+      "base": "https://www.nana00.com",
+      "note": "免登录 · 搜索需先取 Cookie（已内置）",
+      "warmup": "/",
+      "search": {
+        "path": "/search/",
+        "method": "POST",
+        "body": "type=articlename&searchkey={q}",
+        "list": "ul.txt-list li",
+        "title": "span.s2 a",
+        "link": "span.s2 a@href",
+        "author": "span.s4"
+      },
+      "detail": {
+        "path": "/{id}/",
+        "title": "h1"
+      },
+      "catalog": {
+        "path": "/{id}/",
+        "list": "ul.section-list li a",
+        "link": "@href"
+      },
+      "chapter": {
+        "path": "{itemId}",
+        "content": "#content",
+        "remove": [
+          "script",
+          "style",
+          "div[align=center]",
+          ".bottem"
+        ]
       }
     }
   ]

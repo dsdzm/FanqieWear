@@ -171,7 +171,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 20 / versionName 2.4.0
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 21 / versionName 2.5.0
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -401,3 +401,16 @@ eSpeak 自带 104 个共振峰变体，实测同一句话基频差异明显：
 | 百度翻译 gettts | ✅ 300 字实测 604KB | 否 | **当前采用**，偶尔限流，已加预取与缓存 |
 | 有道 dictvoice | ❌ 长文本 500 | 否 | 只适合单词/短句 |
 | 搜狗 synthesis | 302 跳转 | 是 | 需要签名，放弃 |
+
+## 2.5.0：配色修复 / 听书页重做 / 冷启动 / 关于页 / 站点
+
+- **配色**：主题里补了 `LocalContentColor`，所有没显式写颜色的文字都跟随主题；
+  历史、书架再单独兜一层，切主题不会再出现"文字和背景同色"。
+- **听书页**：整页可上下滚动；倍速改成点开弹窗选（0.8/1.0/1.5/2/3）；
+  新增「朗读引擎」弹窗，页内直接切 自动/系统/在线/内置。
+- **冷启动**：`SourceRegistry / ShelfStore / TtsPlayer / DownloadStore` 全部改 `by lazy`，
+  字体映射和 Coil 加载器挪到后台线程，不再堵首帧。
+- **右滑返回**：边缘触发区 28dp → 44dp，触发阈值 28% → 22%，更好滑出来。
+- **关于页**：作者 东山de字幕 · 2332184782@qq.com。
+- **站点**：新增「娜娜阅读」（nana00.com），并给声明式书源加了 Cookie 罐和 warmup，
+  这类"搜索前必须先拿会话"的 PHP 站终于能用了。

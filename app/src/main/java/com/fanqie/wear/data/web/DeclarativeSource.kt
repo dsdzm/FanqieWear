@@ -33,6 +33,8 @@ data class SiteRule(
     val note: String = "",
     /** 搜索规则，没有就表示不支持搜索 */
     val search: SearchRule? = null,
+    /** 先访问这个路径拿 Cookie（部分站点搜索必须先有会话） */
+    val warmup: String = "",
     val detail: DetailRule,
     val catalog: CatalogRule,
     val chapter: ChapterRule,
@@ -200,6 +202,10 @@ class DeclarativeSource(
 
     private val catalogCache = HashMap<String, List<Chapter>>()
 
+    /** 会话 Cookie：有些站搜索要先访问首页拿到 cookie 才给结果 */
+    private val cookieJar = LinkedHashMap<String, String>()
+    private var warmedUp = false
+
     private fun enc(s: String): String = java.net.URLEncoder.encode(s, "UTF-8")
 
     private fun absolute(path: String): String = when {
@@ -234,6 +240,10 @@ class DeclarativeSource(
     }
 
     private fun fetch(url: String, method: String = "GET", body: String = ""): Document {
+        if (!warmedUp && rule.warmup.isNotBlank()) {
+            warmedUp = true
+            runCatching { fetch(absolute(rule.warmup)) }
+        }
         val conn = Jsoup.connect(url)
             .userAgent(UA)
             .header("Accept-Language", "zh-CN,zh;q=0.9")
@@ -249,9 +259,11 @@ class DeclarativeSource(
                 }
             }
         }
-        val doc = runCatching { conn.get() }.getOrElse {
-            throw ApiException("${rule.name} 连不上：${it.message?.take(40)}")
+        if (cookieJar.isNotEmpty()) {
+            conn.header("Cookie", cookieJar.entries.joinToString("; ") { "${it.key}=${it.value}" })
         }
+        val doc = runCatching { conn.execute().also { resp -> resp.cookies().forEach { (k, v) -> cookieJar[k] = v } }.parse() }
+            .getOrElse { throw ApiException("${rule.name} 连不上：${it.message?.take(40)}") }
         if (doc.title().isBlank() && doc.body() == null) throw ApiException("${rule.name} 返回了空页面")
         return doc
     }

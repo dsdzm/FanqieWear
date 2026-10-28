@@ -16,23 +16,23 @@ import com.fanqie.wear.tts.TtsPlayer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class FanqieApp : Application() {
 
-    /** 书源注册表：页面统一从这里取当前书源，不再直接依赖某个站点 */
-    lateinit var sources: SourceRegistry
-        private set
-    lateinit var shelf: ShelfStore
-        private set
-    lateinit var settings: SettingsStore
-        private set
-    lateinit var tts: TtsPlayer
-        private set
-    lateinit var downloads: DownloadStore
-        private set
-    lateinit var downloader: DownloadManager
-    lateinit var exporter: com.fanqie.wear.data.TxtExporter
-        private set
+    /**
+     * 这些都用 by lazy：冷启动时只做必须做的事，
+     * 重对象（各自的 OkHttp 客户端、文件解析）等第一次真正用到再建。
+     */
+    val settings: SettingsStore by lazy { SettingsStore(this) }
+    val sources: SourceRegistry by lazy { SourceRegistry(this, settings) }
+    val shelf: ShelfStore by lazy { ShelfStore(this) }
+    val tts: TtsPlayer by lazy { TtsPlayer(this) }
+    val downloads: DownloadStore by lazy { DownloadStore(this) }
+    val downloader: DownloadManager by lazy { DownloadManager(sources, downloads, scope) }
+    val exporter: com.fanqie.wear.data.TxtExporter by lazy {
+        com.fanqie.wear.data.TxtExporter(this, sources, sources.localLibrary)
+    }
 
     /** 应用级作用域：下载等长任务不随页面销毁 */
     val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -41,23 +41,23 @@ class FanqieApp : Application() {
         super.onCreate()
         instance = this
         installCrashLogger()
-        // 封面图：内存缓存压小一点（手表内存紧），磁盘缓存 64MB
-        runCatching {
-            coil.Coil.setImageLoader(
-                coil.ImageLoader.Builder(this)
-                    .memoryCache { coil.memory.MemoryCache.Builder(this).maxSizePercent(0.12).build() }
-                    .diskCache { coil.disk.DiskCache.Builder().directory(cacheDir.resolve("img")).maxSizeBytes(64L * 1024 * 1024).build() }
-                    .build(),
-            )
+        // 字体映射和图片加载器都不影响首帧，挪到后台线程，别堵冷启动
+        scope.launch {
+            runCatching { FontDecoder.load(this@FanqieApp) }
+            runCatching {
+                coil.Coil.setImageLoader(
+                    coil.ImageLoader.Builder(this@FanqieApp)
+                        .memoryCache { coil.memory.MemoryCache.Builder(this@FanqieApp).maxSizePercent(0.12).build() }
+                        .diskCache {
+                            coil.disk.DiskCache.Builder()
+                                .directory(cacheDir.resolve("img"))
+                                .maxSizeBytes(64L * 1024 * 1024)
+                                .build()
+                        }
+                        .build(),
+                )
+            }
         }
-        FontDecoder.load(this)
-        settings = SettingsStore(this)
-        sources = SourceRegistry(this, settings)
-        shelf = ShelfStore(this)
-        tts = TtsPlayer(this)
-        downloads = DownloadStore(this)
-        downloader = DownloadManager(sources, downloads, scope)
-        exporter = com.fanqie.wear.data.TxtExporter(this, sources, sources.localLibrary)
     }
 
     /**

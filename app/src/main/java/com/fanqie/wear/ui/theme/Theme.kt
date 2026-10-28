@@ -15,7 +15,10 @@ import androidx.wear.compose.material3.Typography
 @Composable
 fun FanqieWearTheme(theme: Int = 0, accent: Int = 0, content: @Composable () -> Unit) {
     val palette = paletteFor(theme, accent)
-    CompositionLocalProvider(LocalPalette provides palette) {
+    CompositionLocalProvider(
+        LocalPalette provides palette,
+        androidx.wear.compose.material3.LocalContentColor provides palette.text,
+    ) {
         MaterialTheme(
             typography = WearTypography,
             content = content,

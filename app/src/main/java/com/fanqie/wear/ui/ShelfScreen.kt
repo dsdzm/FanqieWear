@@ -149,6 +149,7 @@ fun ShelfScreen(
                             text = it.title,
                             fontSize = dims.titleSmall,
                             fontWeight = FontWeight.Medium,
+                            color = LocalPalette.current.text,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),

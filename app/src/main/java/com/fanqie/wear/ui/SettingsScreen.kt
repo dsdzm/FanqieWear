@@ -580,6 +580,9 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                                     color = p.text,
                                 )
                                 Text("v$versionName · minSdk 26", fontSize = dims.label, color = p.muted)
+                                Spacer(Modifier.height(2.dp))
+                                Text("作者：东山de字幕", fontSize = dims.label, color = p.text, maxLines = 1)
+                                Text("联系：2332184782@qq.com", fontSize = dims.label, color = p.text, maxLines = 1)
                                 Spacer(Modifier.height(6.dp))
                                 Text(
                                     text = "数据来自笔趣阁、番茄小说、七猫免费小说的公开页面，仅供个人学习研究。\n" +

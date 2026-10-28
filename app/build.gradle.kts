@@ -24,8 +24,8 @@ android {
         applicationId = "com.fanqie.wear"
         minSdk = 26
         targetSdk = 34
-        versionCode = 20
-        versionName = "2.4.0"
+        versionCode = 21
+        versionName = "2.5.0"
 
         // 手表基本都是这两个 ABI；内置语音引擎的 .so 按 ABI 分别提供
         ndk {
