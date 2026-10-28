@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.layout.ContentScale
@@ -59,12 +60,14 @@ fun GlassCard(
     val dims = rememberDeviceDims()
     val haptic = LocalHapticFeedback.current
     val enabled = LocalDisplayConfig.current.haptics
-    val corner = shape ?: RoundedCornerShape(dims.corner)
+    val corner = shape ?: RoundedCornerShape(if (p.cardRadiusDp > 0f) p.cardRadiusDp.dp else dims.corner)
+    // 玻璃：半透明填充 + 高光描边，背景能透上来；M3E：实心表面、无描边、大圆角
+    val fill: Brush = if (p.glass) Brush.verticalGradient(listOf(p.cardHigh, p.card)) else SolidColor(p.card)
     Box(
         modifier = modifier
             .clip(corner)
-            .background(Brush.verticalGradient(listOf(p.cardHigh, p.card)))
-            .border(1.dp, p.cardBorder, corner)
+            .background(fill, corner)
+            .then(if (p.glass) Modifier.border(1.dp, p.cardBorder, corner) else Modifier)
             .then(
                 if (onClick != null) {
                     Modifier.clickable {

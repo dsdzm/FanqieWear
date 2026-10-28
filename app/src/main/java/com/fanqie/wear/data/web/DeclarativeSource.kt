@@ -9,7 +9,9 @@ import com.fanqie.wear.data.ChapterContent
 import com.fanqie.wear.data.Source
 import com.fanqie.wear.data.SourceCapability
 import com.fanqie.wear.data.SourceShelf
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
@@ -152,7 +154,11 @@ class DeclarativeSource(
     /** key 供聚合层路由 */
     val siteKey: String get() = rule.key
 
-    override suspend fun search(keyword: String, page: Int): List<Book> {
+    override suspend fun search(keyword: String, page: Int): List<Book> = withContext(Dispatchers.IO) {
+        searchIo(keyword, page)
+    }
+
+    private suspend fun searchIo(keyword: String, page: Int): List<Book> {
         val r = rule.search
         if (r == null) {
             // 没有搜索规则的站点（如 7novel）：允许直接贴书号或书籍链接打开
@@ -246,7 +252,11 @@ class DeclarativeSource(
 
     override suspend fun browse(shelfId: String, page: Int): List<Book> = emptyList()
 
-    override suspend fun detail(bookId: String): BookDetail {
+    override suspend fun detail(bookId: String): BookDetail = withContext(Dispatchers.IO) {
+        detailIo(bookId)
+    }
+
+    private suspend fun detailIo(bookId: String): BookDetail {
         val doc = fetch(absolute(fill(rule.detail.path, bookId)))
         val rawTitle = pick(doc, rule.detail.title)?.trim().orEmpty()
         val title = (if (rule.detail.titleTrim.isNotBlank()) rawTitle.substringBefore(rule.detail.titleTrim) else rawTitle)
@@ -263,7 +273,11 @@ class DeclarativeSource(
         return BookDetail(book = book, chapterCount = chapters.size, firstChapterId = chapters.firstOrNull()?.itemId)
     }
 
-    override suspend fun catalog(bookId: String): List<Chapter> {
+    override suspend fun catalog(bookId: String): List<Chapter> = withContext(Dispatchers.IO) {
+        catalogIo(bookId)
+    }
+
+    private suspend fun catalogIo(bookId: String): List<Chapter> {
         val doc = fetch(absolute(fill(rule.catalog.path, bookId)))
         val list = if (rule.catalog.json) parseJsonCatalog(doc) else parseCssCatalog(doc)
         if (rule.catalog.reverse) list.reverse()
@@ -332,7 +346,11 @@ class DeclarativeSource(
         return -1
     }
 
-    override suspend fun chapter(bookId: String, itemId: String): ChapterContent {
+    override suspend fun chapter(bookId: String, itemId: String): ChapterContent = withContext(Dispatchers.IO) {
+        chapterIo(bookId, itemId)
+    }
+
+    private suspend fun chapterIo(bookId: String, itemId: String): ChapterContent {
         val url = if (itemId.startsWith("http")) itemId else absolute(itemId)
         val doc = fetch(url)
         rule.chapter.remove.forEach { sel -> runCatching { doc.select(sel).remove() } }
@@ -357,7 +375,11 @@ class DeclarativeSource(
         )
     }
 
-    override suspend fun ping(): String {
+    override suspend fun ping(): String = withContext(Dispatchers.IO) {
+        pingIo()
+    }
+
+    private suspend fun pingIo(): String {
         ensureSession()
         val doc = runCatching { fetchRaw(rule.base) }.getOrElse {
             throw ApiException("${rule.name} 连不上：${it.message?.take(30)}")

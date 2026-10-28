@@ -1,5 +1,8 @@
 package com.fanqie.wear.data
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
 /**
  * 本地导入的书，做成一个书源，书架/阅读器/听书全部复用现有链路。
  *
@@ -13,37 +16,38 @@ class LocalSource(private val library: LocalLibrary) : BookSource {
     override val capability = SourceCapability(search = true, browse = true, chapter = true, login = false)
     override val shelves = listOf(SourceShelf("all", "全部本地书"))
 
-    override suspend fun search(keyword: String, page: Int): List<Book> {
-        if (page > 0) return emptyList()
+    override suspend fun search(keyword: String, page: Int): List<Book> = withContext(Dispatchers.IO) {
+        if (page > 0) return@withContext emptyList()
         val q = keyword.trim()
-        if (q.isEmpty()) return emptyList()
-        return library.all()
+        if (q.isEmpty()) return@withContext emptyList()
+        library.all()
             .filter { it.title.contains(q, ignoreCase = true) || it.author.contains(q, ignoreCase = true) }
             .map { it.toBook() }
     }
 
-    override suspend fun browse(shelfId: String, page: Int): List<Book> {
-        if (page > 0) return emptyList()
-        return library.all().map { it.toBook() }
+    override suspend fun browse(shelfId: String, page: Int): List<Book> = withContext(Dispatchers.IO) {
+        if (page > 0) return@withContext emptyList()
+        library.all().map { it.toBook() }
     }
 
-    override suspend fun detail(bookId: String): BookDetail {
+    override suspend fun detail(bookId: String): BookDetail = withContext(Dispatchers.IO) {
         val b = library.find(bookId) ?: throw ApiException("本地书不存在，可能已被删除")
-        return BookDetail(
+        BookDetail(
             book = b.toBook(),
             chapterCount = b.chapterCount,
             firstChapterId = if (b.chapterCount > 0) "0" else null,
         )
     }
 
-    override suspend fun catalog(bookId: String): List<Chapter> =
+    override suspend fun catalog(bookId: String): List<Chapter> = withContext(Dispatchers.IO) {
         library.chapters(bookId).mapIndexed { i, c -> Chapter(i.toString(), c.title) }
+    }
 
-    override suspend fun chapter(bookId: String, itemId: String): ChapterContent {
+    override suspend fun chapter(bookId: String, itemId: String): ChapterContent = withContext(Dispatchers.IO) {
         val index = itemId.toIntOrNull() ?: throw ApiException("章节号不合法")
         val chapters = library.chapters(bookId)
         val ch = chapters.getOrNull(index) ?: throw ApiException("章节不存在")
-        return ChapterContent(
+        ChapterContent(
             itemId = itemId,
             bookId = bookId,
             title = ch.title,
@@ -53,9 +57,9 @@ class LocalSource(private val library: LocalLibrary) : BookSource {
         )
     }
 
-    override suspend fun ping(): String {
+    override suspend fun ping(): String = withContext(Dispatchers.IO) {
         val n = library.all().size
-        return if (n == 0) "本地书库为空，书架页可以导入 txt" else "本地书 $n 本，可用"
+        if (n == 0) "本地书库为空，书架页可以导入 txt" else "本地书 $n 本，可用"
     }
 
     private fun LocalBook.toBook(): Book = Book(

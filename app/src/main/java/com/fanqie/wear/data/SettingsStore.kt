@@ -67,6 +67,8 @@ data class AppSettings(
     val ttsOnlineVoice: String = "zh-CN-XiaoxiaoNeural",
     /** 被关闭的声明式站点 key，逗号分隔 */
     val disabledSites: String = "",
+    /** 界面风格：glass = 玻璃材质，m3e = Material 3 Expressive */
+    val uiStyle: String = "glass",
     /** 首页用双列宫格 */
     val homeGrid: Boolean = true,
 
@@ -115,6 +117,7 @@ class SettingsStore(context: Context) {
         ttsVoice = sp.getString("ttsVoice", "cmn") ?: "cmn",
         ttsOnlineVoice = sp.getString("ttsOnlineVoice", "zh-CN-XiaoxiaoNeural") ?: "zh-CN-XiaoxiaoNeural",
         disabledSites = sp.getString("disabledSites", "") ?: "",
+        uiStyle = sp.getString("uiStyle", "glass") ?: "glass",
         homeGrid = sp.getBoolean("homeGrid", true),
         haptics = sp.getBoolean("haptics", true),
         edgeBack = sp.getBoolean("edgeBack", true),
@@ -153,6 +156,7 @@ class SettingsStore(context: Context) {
             .putString("ttsVoice", n.ttsVoice)
             .putString("ttsOnlineVoice", n.ttsOnlineVoice)
             .putString("disabledSites", n.disabledSites)
+            .putString("uiStyle", n.uiStyle)
             .putBoolean("homeGrid", n.homeGrid)
             .putBoolean("haptics", n.haptics)
             .putBoolean("edgeBack", n.edgeBack)

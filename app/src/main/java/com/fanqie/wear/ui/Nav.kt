@@ -2,6 +2,7 @@ package com.fanqie.wear.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -9,9 +10,16 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fanqie.wear.app
 import com.fanqie.wear.data.Source
@@ -21,6 +29,7 @@ import com.fanqie.wear.ui.theme.LocalDisplayConfig
 import com.fanqie.wear.ui.theme.LocalPalette
 import com.fanqie.wear.ui.theme.SafeArea
 import com.fanqie.wear.ui.theme.UiScale
+import kotlinx.coroutines.launch
 
 sealed interface Dest {
     data object Home : Dest
@@ -45,11 +54,11 @@ sealed interface Dest {
 /**
  * 极简导航栈：层级浅（最多 4~5 层），用列表保存即可。
  *
- * 返回只走两条：页面自带的返回按钮、系统返回键（BackHandler）。
- *
- * 右滑关闭**不再由应用实现**：手表 ROM 的"整窗右滑关闭"是系统级手势，由主题里的
- * `android:windowSwipeToDismiss` 控制（见 themes.xml，已置 false）。
- * 应用内再写一层跟手位移，只会和系统手势互相打架 —— 上一个版本就是这么翻车的。
+ * 转场按用户要求改成「二级页面右滑缩小、下面露出返回后看到的页面」：
+ * 每个页面被压到下一层时截一张快照存进 belowStack，返回时先画这张快照，
+ * 上层页面缩小淡出，动画结束再真正出栈。这样：
+ *  - 不会像以前那样整屏跟着手指平移（那看着像系统在拖窗口）；
+ *  - 也不需要为了转场同时组合两个页面（手表扛不住）。
  */
 @Composable
 fun FanqieWearApp() {
@@ -69,9 +78,39 @@ fun FanqieWearApp() {
         }
     }
     var stack by remember { mutableStateOf(initial) }
+    // 与 stack 对齐：belowStack[i] = 离开 stack[i] 时截下的画面
+    var belowStack by remember { mutableStateOf(List<ImageBitmap?>(initial.size) { null }) }
 
-    fun push(d: Dest) { stack = stack + d }
-    fun pop() { if (stack.size > 1) stack = stack.dropLast(1) }
+    val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val motion = rememberNavMotion(scope)
+    var busy by remember { mutableStateOf(false) }
+
+    fun push(d: Dest) {
+        if (busy) return
+        busy = true
+        scope.launch {
+            // 先给当前页留一张快照，再压栈：截图失败也照常进页面，只是下层露背景
+            val snap = captureWindow(context)
+            belowStack = belowStack.dropLast(1) + listOf(snap, null)
+            motion.below = snap
+            stack = stack + d
+            motion.forward()
+            busy = false
+        }
+    }
+
+    fun pop() {
+        if (stack.size <= 1 || busy) return
+        busy = true
+        motion.below = belowStack.getOrNull(stack.size - 2)
+        motion.exit {
+            stack = stack.dropLast(1)
+            belowStack = belowStack.dropLast(1)
+            motion.settle()
+            busy = false
+        }
+    }
 
     val settings by app.settings.state.collectAsStateWithLifecycle()
     val display = DisplayConfig(
@@ -83,14 +122,67 @@ fun FanqieWearApp() {
 
     BackHandler(enabled = stack.size > 1) { pop() }
 
-    FanqieWearTheme(theme = settings.theme, accent = settings.accent) {
+    FanqieWearTheme(theme = settings.theme, accent = settings.accent, style = settings.uiStyle) {
         CompositionLocalProvider(LocalDisplayConfig provides display) {
             val p = LocalPalette.current
             Box(modifier = Modifier.fillMaxSize()) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     drawRect(brush = Brush.verticalGradient(listOf(p.bgTop, p.bgBottom)))
                 }
-                Screen(dest = stack.last(), push = ::push, pop = ::pop)
+
+                // 下层：返回后看到的页面（快照）。只在转场期间画，平时不白画一层位图
+                val below = motion.below
+                if (motion.active && below != null) {
+                    Image(
+                        bitmap = below,
+                        contentDescription = null,
+                        contentScale = ContentScale.FillBounds,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .zIndex(0f)
+                            // 动画值全部在绘制层读：拖动时只重绘，不触发重组
+                            .graphicsLayer {
+                                val s = motion.belowScale
+                                scaleX = s
+                                scaleY = s
+                                // 被盖住时压暗一点，露出来时回到全亮
+                                alpha = (1f - 0.3f * motion.keep).coerceIn(0f, 1f)
+                                clip = true
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(
+                                    motion.belowRadiusDp.dp,
+                                )
+                            },
+                    )
+                }
+
+                // 上层：当前页面。缩放 + 轻微右移，不再整屏平移
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(1f)
+                        .graphicsLayer {
+                            val s = motion.topScale
+                            scaleX = s
+                            scaleY = s
+                            translationX = motion.shift
+                            alpha = motion.fade
+                            clip = motion.keep < 0.999f
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(
+                                ((1f - motion.keep) * 18f).dp,
+                            )
+                        }
+                        .navSwipeBack(
+                            enabled = settings.edgeBack && stack.size > 1,
+                            motion = motion,
+                            onStart = {
+                                motion.below = belowStack.getOrNull(stack.size - 2)
+                                motion.dragStart()
+                            },
+                            onCommit = { pop() },
+                        ),
+                ) {
+                    Screen(dest = stack.last(), push = ::push, pop = ::pop)
+                }
             }
         }
     }

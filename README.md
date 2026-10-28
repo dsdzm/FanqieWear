@@ -171,7 +171,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 24 / versionName 2.6.2
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 25 / versionName 2.7.0
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -509,3 +509,43 @@ alert，页面里一条结果都没有 —— 这就是"第二次搜不到"的�
 - **删除** `NavMotion.kt`（缩放 + PixelCopy 快照那套）、`Modifier.navSwipeBack` 手势、
   设置里的「边缘滑动返回」开关
 - 返回只留两条：页面自带的返回按钮、系统返回键（`BackHandler`）
+
+## 2.7.0：修好聚合搜索（主线程做网络）、右滑回归、双风格
+
+### ① 聚合搜索 / 娜娜"完全不可用"——真因是主线程做网络
+
+`DeclarativeSource` 和 `AggregateSource` 从头到尾**没有切线程**，而搜索是从 Compose 的
+`LaunchedEffect`（主线程）发起的。jsoup 是阻塞 IO，于是直接
+`NetworkOnMainThreadException` —— 每个声明式站点都必然失败。
+
+对比一下就很清楚：`BiqugeApi` 每个方法都有 `withContext(Dispatchers.IO)`，所以"笔趣阁"能用；
+声明式的这些站一个都没有。现在 `search / detail / catalog / chapter / ping` 全部切到 IO，
+`LocalSource` 的文件读也一样（阅读页同样是在主线程调 `chapter()`）。
+
+另外聚合搜索以前把所有站点异常都 `runCatching` 吞掉，界面只剩一个空列表。现在会记住每个站点的
+失败原因（超时 / 连接失败 / 解析不到），全军覆没时直接报出来：
+`所有站点都没搜到：娜娜阅读 — 超时（9 秒没响应）；笔趣阁365 — ...`
+
+### ② 应用内右滑返回
+
+2.6.2 把自写的转场删了，是因为它和系统手势打架。现在系统那边已经用
+`windowSwipeToDismiss=false` 关掉，应用内这套才真正拿得到手势：
+
+- 左侧 45% 区域起手（圆表边缘太窄，原来 56dp 基本摸不到），滑过屏宽 30% 触发
+- 上层页面缩小 + 右移最多 30dp，下层画"返回后看到的页面"的快照
+- 抓不到快照时**只缩小不位移**，避免又变成"整块窗口滑走"的观感
+- 设置 → 操作 → 右滑返回，可关
+
+### ③ 双界面风格
+
+新增 `uiStyle`：`glass`（玻璃材质，默认）/ `m3e`（Material 3 Expressive）。
+
+| | 玻璃材质 | M3E |
+|---|---|---|
+| 卡片 | 半透明渐变 + 高光描边，背景透上来 | 实心抬高表面，无描边 |
+| 圆角 | 20dp | 26dp |
+| 背景 | 保留竖直渐变 | 收窄成近乎纯色 |
+| 强调色 | 原样 | 原样（保留可换色） |
+
+入口：设置 → 操作 → 界面风格。这一版先把**材质层**做出来（卡片/背景/圆角/描边），
+页面结构没动；逐页重排是下一步。

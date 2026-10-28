@@ -26,6 +26,14 @@ data class Palette(
     val jade: Color,
     val divider: Color,
     val isLight: Boolean,
+    /**
+     * 界面风格：
+     *  - false = M3E（Material 3 Expressive）：实心卡片、大圆角、色块分明、无渐变
+     *  - true  = 玻璃材质：半透明卡片 + 高光描边 + 背景渐变透上来
+     */
+    val glass: Boolean = true,
+    /** 卡片圆角；0 表示沿用设备自适应的 dims.corner */
+    val cardRadiusDp: Float = 0f,
 )
 
 val InkPalette = Palette(
@@ -79,7 +87,12 @@ val AccentPacks = listOf(
     AccentPack("紫藤", Color(0xFFA98BFF), Color(0xFFE4A0B8), Color(0xFF7A5FD0)),
 )
 
-fun paletteFor(theme: Int, accentIndex: Int = 0): Palette {
+/**
+ * 取色板。
+ *
+ * @param styleKey "glass"（默认，半透明玻璃）或 "m3e"（Material 3 Expressive）
+ */
+fun paletteFor(theme: Int, accentIndex: Int = 0, styleKey: String = "glass"): Palette {
     val base = when (theme) {
         1 -> OledPalette
         2 -> PaperPalette
@@ -88,7 +101,28 @@ fun paletteFor(theme: Int, accentIndex: Int = 0): Palette {
     val pack = AccentPacks.getOrElse(accentIndex) { AccentPacks[0] }
     val main = if (base.isLight) pack.darkMain else pack.main
     val onAccent = if (base.isLight) Color.White else Color(0xFF120806)
-    return base.copy(
+    val styled = if (styleKey == "m3e") {
+        // M3E：卡片改成实心抬高表面，圆角更大，底色收成近乎纯色（不再有渐变过渡）
+        base.copy(
+            bgTop = base.bgTop,
+            bgBottom = lerp(base.bgTop, base.bgBottom, 0.35f),
+            card = lerp(base.card, base.bgTop, 0.35f),
+            cardHigh = lerp(base.cardHigh, base.bgTop, 0.15f),
+            cardBorder = Color.Transparent,
+            glass = false,
+            cardRadiusDp = if (base.isLight) 26f else 26f,
+        )
+    } else {
+        // 玻璃：卡片压薄一点让背景透上来，描边抬亮
+        base.copy(
+            card = base.card.copy(alpha = if (base.isLight) 0.86f else 0.62f),
+            cardHigh = base.cardHigh.copy(alpha = if (base.isLight) 0.94f else 0.74f),
+            cardBorder = if (base.isLight) Color(0x14000000) else Color(0x2EFFFFFF),
+            glass = true,
+            cardRadiusDp = 20f,
+        )
+    }
+    return styled.copy(
         accent = main,
         accentSoft = lerp(main, base.bgTop, 0.78f),
         onAccent = onAccent,

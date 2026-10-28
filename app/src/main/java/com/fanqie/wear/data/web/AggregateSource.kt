@@ -9,9 +9,12 @@ import com.fanqie.wear.data.ChapterContent
 import com.fanqie.wear.data.Source
 import com.fanqie.wear.data.SourceCapability
 import com.fanqie.wear.data.SourceShelf
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -28,19 +31,54 @@ class AggregateSource(private val sites: () -> List<DeclarativeSource>) : BookSo
     override val capability = SourceCapability(search = true, browse = false, chapter = true, login = false)
     override val shelves: List<SourceShelf> = emptyList()
 
-    override suspend fun search(keyword: String, page: Int): List<Book> = coroutineScope {
-        val list = sites().filter { it.capability.search }
-        if (list.isEmpty()) throw ApiException("没有启用的站点，去「设置 → 网络与书源」开几个")
-        val jobs = list.map { s ->
-            async {
-                val r = runCatching { withTimeoutOrNull(9000) { s.search(keyword, page) } }.getOrNull()
-                r.orEmpty().map { b -> b.copy(id = "${s.siteKey}|${b.id}", source = Source.AGG) }
+    /**
+     * 每个站点上一次搜索的失败原因。
+     *
+     * 聚合搜索要并发查多个站，任何一个挂了都不该拖垮整体；但"一条都没有"时
+     * 必须能说清楚是谁、为什么 —— 否则界面上就是个空列表，用户只会觉得"完全不能用"。
+     */
+    @Volatile var lastErrors: Map<String, String> = emptyMap()
+        private set
+
+    override suspend fun search(keyword: String, page: Int): List<Book> = withContext(Dispatchers.IO) {
+        coroutineScope {
+            val list = sites().filter { it.capability.search }
+            if (list.isEmpty()) throw ApiException("没有启用的站点，去「设置 → 网络与书源」开几个")
+            val errors = java.util.Collections.synchronizedMap(LinkedHashMap<String, String>())
+
+            val jobs = list.map { s ->
+                async {
+                    try {
+                        val r = withTimeoutOrNull(9000) { s.search(keyword, page) }
+                        if (r == null) {
+                            errors[s.displayName] = "超时（9 秒没响应）"
+                            emptyList()
+                        } else {
+                            r.map { b -> b.copy(id = "${s.siteKey}|${b.id}", source = Source.AGG) }
+                        }
+                    } catch (c: CancellationException) {
+                        throw c
+                    } catch (t: Throwable) {
+                        errors[s.displayName] = t.message?.take(48) ?: t.javaClass.simpleName
+                        emptyList()
+                    }
+                }
             }
+            val all = jobs.awaitAll().flatten()
+            lastErrors = errors.toMap()
+
+            // 同名同作者算一本，保留第一个（站点顺序即优先级）
+            val seen = HashSet<String>()
+            val merged = all.filter {
+                seen.add(it.title.replace(Regex("\\s+"), "") + "|" + it.author.substringBefore('·').trim())
+            }
+            if (merged.isEmpty() && lastErrors.isNotEmpty()) {
+                throw ApiException(
+                    "所有站点都没搜到：" + lastErrors.entries.joinToString("；") { "${it.key} — ${it.value}" },
+                )
+            }
+            merged
         }
-        val all = jobs.awaitAll().flatten()
-        // 同名同作者算一本，保留第一个（站点顺序即优先级）
-        val seen = HashSet<String>()
-        all.filter { seen.add(it.title.replace(Regex("\\s+"), "") + "|" + it.author.substringBefore('·').trim()) }
     }
 
     override suspend fun browse(shelfId: String, page: Int): List<Book> = emptyList()

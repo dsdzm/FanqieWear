@@ -555,6 +555,18 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                         }
                     }
                     item {
+                        ChoiceCard(
+                            "界面风格",
+                            listOf("玻璃材质", "M3E"),
+                            if (s.uiStyle == "m3e") 1 else 0,
+                        ) { v ->
+                            app.settings.update { it.copy(uiStyle = if (v == 1) "m3e" else "glass") }
+                        }
+                    }
+                    item {
+                        SwitchCard("右滑返回", "在页面左侧向右滑，返回上一页", s.edgeBack) {
+                            app.settings.update { it.copy(edgeBack = it.edgeBack.not()) }
+                        }
                     }
                     item {
                         Text(
