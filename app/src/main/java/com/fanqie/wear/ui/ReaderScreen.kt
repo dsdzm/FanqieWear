@@ -239,7 +239,9 @@ fun ReaderScreen(
         onDispose { view.keepScreenOn = false }
     }
     val rotaryFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { rotaryFocus.requestFocus() } }
+    // 页面不再因返回而重建，回到栈顶时要主动把表冠焦点要回来
+    val pageActive = LocalPageActive.current
+    LaunchedEffect(pageActive) { if (pageActive) runCatching { rotaryFocus.requestFocus() } }
 
     fun goNext() {
         if (settings.pageMode == 1 && page < pages.lastIndex) {

@@ -1,9 +1,13 @@
 package com.fanqie.wear.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -13,21 +17,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
-import android.app.Activity
-import android.content.Context
-import android.content.ContextWrapper
-import android.graphics.Bitmap
-import android.os.Handler
-import android.os.Looper
-import android.view.PixelCopy
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
-import kotlin.coroutines.resume
-import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -36,81 +33,77 @@ import kotlinx.coroutines.launch
 /**
  * 页面栈转场（右滑返回）。
  *
- * 旧实现把 `translationX` 挂在整屏根布局上、下层又没有内容可露，
- * 所以右滑看起来就是「整个应用窗口跟着手指走」——在定制 ROM 的手表上尤其像系统在拖窗口。
+ * 这一版彻底删掉了「PixelCopy 快照」那套机制。旧做法的两个毛病：
+ *  1. 出栈后下层页面是**重新组合**的，数据要重新拉，第一帧是空白 —— 快照一撤就闪；
+ *  2. 上层缩放时同时淡出，快照又从下面透出来，两页内容叠在一起，字全糊。
  *
- * 现在改成：
- *  - 上层页面**缩小 + 轻微右移**，不整屏平移；
- *  - 下层画的是「返回后看到的页面」的**快照**，逐像素还原被遮住的画面；
- *  - 全程只组合一个页面（快照是位图），手表不会为了转场多渲染一整页。
+ * 现在的做法：
+ *  - 页面栈始终保留**栈顶两层**在组合树里，下层一直活着（滚动位置、已加载的数据都在），
+ *    返回时它原地就位，不需要重建，也就不可能闪；
+ *  - 平时下层整体平移到屏幕外（translationX = -width），既不绘制也不拦截触摸，
+ *    只有转场（[active]）时才归位 0；
+ *  - 上层退出时**只缩小 + 右移出屏，全程不透明**，任何一帧都是完整画面，
+ *    不会再出现两个半透明页面重合。
  *
- * 数值约定：
- *  - [keep] 1 = 页面完全展开，0 = 收到最小并淡出；
- *  - [shift] 上层右移像素（跟手，回弹时归零）；
- *  - [fade] 上层不透明度（只在真正离场时淡出，跟手阶段保持 1）。
+ * 数值约定：所有值都是上层/下层的直接变换量，由绘制层读取，不触发重组。
  */
 @Stable
 class NavMotion(private val scope: CoroutineScope) {
 
-    /** 下层页面快照；null 表示没有（栈底、或截图失败），此时只露背景 */
-    var below by mutableStateOf<ImageBitmap?>(null)
-
-    /** 是否正在转场：转场期间才画下层，平时不白画一层位图 */
+    /** 是否处于转场（入场动画 / 跟手 / 回弹 / 离场动画） */
     var active by mutableStateOf(false)
         private set
 
-    var keep by mutableFloatStateOf(1f)
+    /** 上层缩放 */
+    var topScale by mutableFloatStateOf(1f)
         private set
-    var shift by mutableFloatStateOf(0f)
+
+    /** 上层横向位移（px），退出时一路滑到屏宽 */
+    var topShift by mutableFloatStateOf(0f)
         private set
-    var fade by mutableFloatStateOf(1f)
+
+    /** 下层缩放：被压住时略小，浮上来时回到 1 */
+    var belowScale by mutableFloatStateOf(1f)
         private set
 
     private var anim: Job? = null
 
-    /** 上层缩放：1 → 0.66（跟手）→ 0.52（离场） */
-    val topScale: Float get() = 0.52f + 0.48f * keep
+    // 手势起点快照：回弹动画没走完又按下时，从当前位置接着走，不会跳回原位
+    private var baseShift = 0f
+    private var baseScale = 1f
 
-    /**
-     * 下层缩放。
-     *
-     * 固定 1.0：快照本来就是"返回后看到的页面"，一像素都不能动 ——
-     * 之前这里跟着缩 0.94→1，和新页面 1.0 对不齐，衔接那一下就是闪。
-     */
-    val belowScale: Float get() = 1f
-
-    /**
-     * 新页面入场：从略小撑到满屏。
-     * 不做淡入 —— 淡入期间会透出下层，看起来像闪一下背景。
-     */
+    /** 新页面入场：从略小撑满。不做淡入，淡入会透出下层 */
     fun forward() {
         anim?.cancel()
         active = true
-        keep = 0.86f
-        fade = 1f
-        shift = 0f
+        topShift = 0f
+        topScale = 0.97f
+        belowScale = 1f
         anim = scope.launch {
-            animate(keep, 1f, animationSpec = tween(230, easing = EnterEase)) { v, _ -> keep = v }
+            animate(topScale, 1f, animationSpec = tween(200, easing = EnterEase)) { v, _ -> topScale = v }
             active = false
         }
     }
 
-    /** 开始右滑：清掉上一段动画，准备跟手 */
+    /** 开始跟手：记下当前位置作为基准，上层满屏时下层才开始被压小 */
     fun dragStart() {
         anim?.cancel()
         anim = null
         active = true
-        fade = 1f
-        shift = 0f
-        keep = 1f
+        baseShift = topShift
+        baseScale = topScale
+        if (topScale >= 0.999f) {
+            topShift = 0f
+            baseShift = 0f
+        }
     }
 
     /** 跟手：p 为 0..1 的阈值进度 */
     fun dragTo(p: Float, maxShiftPx: Float) {
-        keep = 1f - 0.34f * p
-        // 抓不到下层快照时不做位移，只缩小淡出 —— 否则又像"整块窗口在滑"
-        shift = if (below != null) maxShiftPx * p else 0f
-        fade = 1f
+        topScale = baseScale - 0.05f * p
+        topShift = baseShift + maxShiftPx * p
+        // 下层同步被压小一点（0.94 封底），营造"返回页在后面等着"的层次
+        belowScale = 1f - 0.06f * p
     }
 
     /** 没到阈值，回弹 */
@@ -118,57 +111,68 @@ class NavMotion(private val scope: CoroutineScope) {
         anim?.cancel()
         anim = scope.launch {
             coroutineScope {
-                launch { animate(keep, 1f, animationSpec = tween(170, easing = EnterEase)) { v, _ -> keep = v } }
-                launch { animate(shift, 0f, animationSpec = tween(170)) { v, _ -> shift = v } }
+                launch { animate(topScale, 1f, animationSpec = tween(180, easing = EnterEase)) { v, _ -> topScale = v } }
+                launch { animate(topShift, 0f, animationSpec = tween(180, easing = EnterEase)) { v, _ -> topShift = v } }
+                launch { animate(belowScale, 1f, animationSpec = tween(180, easing = EnterEase)) { v, _ -> belowScale = v } }
             }
+            reset()
             active = false
         }
     }
 
-    /** 过阈值：缩着淡出，结束后再真正出栈 */
-    fun exit(onDone: () -> Unit) {
+    /**
+     * 过阈值：上层缩小并整体滑出右边，下层放大到 1。
+     * 上层不淡出 —— 不透明地滑走才是干净的。
+     */
+    fun exit(widthPx: Float, onDone: () -> Unit) {
         anim?.cancel()
         active = true
+        // 返回键/点返回按钮触发时（没有手势位移），给下层一个"被压着"的起点，
+        // 这样上层滑走时下层会一边放大一边浮上来。手势路径则保持当前值，避免跳。
+        if (topShift < 0.5f) belowScale = 0.94f
+        // 从手势接过来时 belowScale 已经在 0.94~1 之间，这里不要再赋初值，
+        // 否则下层会当场跳一下（此刻上层只缩了 5%，边上是看得见它的）
         anim = scope.launch {
             coroutineScope {
-                launch { animate(keep, 0f, animationSpec = tween(190, easing = ExitEase)) { v, _ -> keep = v } }
-                launch { animate(fade, 0f, animationSpec = tween(160)) { v, _ -> fade = v } }
+                launch { animate(topShift, widthPx, animationSpec = tween(220, easing = ExitEase)) { v, _ -> topShift = v } }
+                launch { animate(topScale, 0.94f, animationSpec = tween(220, easing = ExitEase)) { v, _ -> topScale = v } }
+                launch { animate(belowScale, 1f, animationSpec = tween(220, easing = ExitEase)) { v, _ -> belowScale = v } }
             }
             onDone()
         }
     }
 
-    /**
-     * 出栈完成：立刻复位，新页面顶上来时正好是 1.0/1.0。
-     *
-     * 注意这里**不**关 active —— 真实页面要等下一帧才画出来，如果同一帧把下层快照撤掉，
-     * 中间会空一帧（就是"闪一下"）。调用方会在两帧后调 [finish]。
-     */
+    /** 出栈完成：复位。调用方已经在同一帧把上层从栈里摘掉，不会看到跳变 */
     fun settle() {
         anim?.cancel()
         anim = null
-        keep = 1f
-        fade = 1f
-        shift = 0f
+        reset()
+        active = false
     }
 
-    /** 新页面已经画出来了，可以撤掉下层快照 */
-    fun finish() {
-        active = false
+    private fun reset() {
+        topScale = 1f
+        topShift = 0f
+        belowScale = 1f
     }
 }
 
-/** 起手快、收尾稳 */
-private val EnterEase = CubicBezierEasing(0.2f, 0f, 0.2f, 1f)
+/** 进场：起手快、收尾稳 */
+private val EnterEase = CubicBezierEasing(0.22f, 0f, 0.16f, 1f)
 
-/** 退出果断：起始斜率大，最后一段干脆落位 */
-private val ExitEase = CubicBezierEasing(0.16f, 0.94f, 0.26f, 1f)
+/** 退场：起始斜率大，最后一段干脆落位 */
+private val ExitEase = CubicBezierEasing(0.24f, 0.86f, 0.24f, 1f)
 
 /**
  * 右滑返回手势。
  *
- * 只从屏幕左缘 56dp 内起手才接管（避免和列表滚动、阅读页翻页打架），
- * 滑过屏宽 30% 触发返回。手势只驱动 [NavMotion]，不再改布局的 translationX。
+ * 触发条件刻意做得很严，避免"手一按左边就被当成返回"：
+ *  - 必须在左缘 [edgeDp] 之内按下；
+ *  - 必须先移动超过 touchSlop；
+ *  - 必须明显是向右的横向手势（|dx| > |dy| * 1.6）；
+ *  - 一旦发现子组件已经消费了事件（列表滚动等），立刻让路。
+ *
+ * 只有四条同时满足才接管并把页面交出去，其余情况一律不干预、不消费。
  */
 @Composable
 fun Modifier.navSwipeBack(
@@ -179,40 +183,53 @@ fun Modifier.navSwipeBack(
 ): Modifier {
     if (!enabled) return this
     val density = LocalDensity.current
-    val widthPx = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
-    val startZonePx = widthPx * 0.45f
-    val maxShift = with(density) { 30.dp.toPx() }
-    val threshold = (widthPx * 0.30f).coerceAtLeast(with(density) { 90.dp.toPx() })
+    val widthPx = with(density) {
+        LocalConfiguration.current.screenWidthDp.dp.toPx()
+    }
+    val edgePx = with(density) { 30.dp.toPx() }.coerceAtMost(widthPx * 0.18f)
+    val maxShift = widthPx * 0.28f
+    val threshold = (widthPx * 0.26f).coerceAtLeast(with(density) { 72.dp.toPx() })
     val commit by rememberUpdatedState(onCommit)
     val start by rememberUpdatedState(onStart)
 
     return this.pointerInput(enabled, widthPx) {
-        var fromEdge = false
-        var accum = 0f
-        detectHorizontalDragGestures(
-            onDragStart = { offset ->
-                fromEdge = offset.x <= startZonePx
-                accum = 0f
-                if (fromEdge) start()
-            },
-            onDragEnd = {
-                if (fromEdge) {
-                    if (accum >= threshold) commit() else motion.cancel()
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Main)
+            if (down.position.x > edgePx) return@awaitEachGesture
+
+            var dx = 0f
+            var dy = 0f
+            var claimed = false
+
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Main)
+                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                if (change.changedToUpIgnoreConsumed()) break
+                // 子组件（列表滚动、阅读页翻页）已经接管了这次手势，直接让路
+                if (!claimed && change.isConsumed) break
+
+                val d = change.positionChangeIgnoreConsumed()
+                dx += d.x
+                dy += d.y
+
+                if (!claimed) {
+                    val slop = viewConfiguration.touchSlop
+                    if (abs(dx) > slop || abs(dy) > slop) {
+                        val horizontal = dx > 0f && abs(dx) > abs(dy) * 1.6f
+                        if (!horizontal) break
+                        claimed = true
+                        start()
+                    }
                 }
-                fromEdge = false
-                accum = 0f
-            },
-            onDragCancel = {
-                if (fromEdge) motion.cancel()
-                fromEdge = false
-                accum = 0f
-            },
-        ) { change, dragAmount ->
-            if (!fromEdge) return@detectHorizontalDragGestures
-            // 往回滑就当成放弃：进度不倒退到负值，但也不锁死在 1
-            accum = (accum + dragAmount).coerceIn(0f, threshold)
-            change.consume()
-            motion.dragTo(accum / threshold, maxShift)
+                if (claimed) {
+                    change.consume()
+                    motion.dragTo((dx / threshold).coerceIn(0f, 1f), maxShift)
+                }
+            }
+
+            if (claimed) {
+                if (dx >= threshold) commit() else motion.cancel()
+            }
         }
     }
 }
@@ -220,53 +237,6 @@ fun Modifier.navSwipeBack(
 /** 记住一个转场状态；页面重组不会重建 */
 @Composable
 fun rememberNavMotion(scope: CoroutineScope): NavMotion = remember { NavMotion(scope) }
-
-/**
- * 抓一张当前窗口的画面，用作转场的"下层页面"。
- *
- * 为什么不用 Compose 的 GraphicsLayer 录制：那等于给整页加一层离屏纹理，
- * 每帧都要多渲染一遍，手表上会直接吃掉帧率 —— 用户刚反馈过列表卡。
- * PixelCopy 只在真正要转场时抓一次，平时零开销。
- *
- * 抓不到（窗口还没画、系统限制）返回 null，调用方退化成只露背景，不会崩。
- */
-suspend fun captureWindow(context: Context): ImageBitmap? {
-    val activity = context.findActivity() ?: return null
-    val window = activity.window ?: return null
-    val view = window.decorView
-    val w = view.width
-    val h = view.height
-    if (w <= 0 || h <= 0) return null
-
-    val bmp = runCatching { Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888) }.getOrNull() ?: return null
-    val ok = runCatching {
-        suspendCancellableCoroutine { cont ->
-            PixelCopy.request(
-                window,
-                bmp,
-                { result -> if (cont.isActive) cont.resume(result == PixelCopy.SUCCESS) },
-                Handler(Looper.getMainLooper()),
-            )
-        }
-    }.getOrDefault(false)
-
-    if (!ok || isBlank(bmp)) {
-        runCatching { bmp.recycle() }
-        return null
-    }
-    return bmp.asImageBitmap()
-}
-
-/** 全黑/全透明说明没抓到内容（个别 ROM 会这样），当作失败 */
-private fun isBlank(bmp: Bitmap): Boolean = runCatching {
-    val xs = intArrayOf(bmp.width / 4, bmp.width / 2, bmp.width * 3 / 4)
-    val ys = intArrayOf(bmp.height / 4, bmp.height / 2, bmp.height * 3 / 4)
-    for (x in xs) for (y in ys) {
-        val c = bmp.getPixel(x, y)
-        if ((c ushr 24) != 0 && (c and 0x00FFFFFF) != 0) return false
-    }
-    true
-}.getOrDefault(false)
 
 fun Context.findActivity(): Activity? {
     var c: Context = this
