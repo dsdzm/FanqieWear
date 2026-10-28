@@ -67,6 +67,12 @@ data class AppSettings(
     val ttsOnlineVoice: String = "zh-CN-XiaoxiaoNeural",
     /** 被关闭的声明式站点 key，逗号分隔 */
     val disabledSites: String = "",
+    /** 自定义背景图（content:// 或 file://），空表示用主题底色 */
+    val bgImage: String = "",
+    /** 背景模糊强度 0..3（降采样实现，低版本系统同样有效） */
+    val bgBlur: Int = 1,
+    /** 背景压暗强度 0..3 */
+    val bgDim: Int = 1,
     /** 界面风格：glass = 玻璃材质，m3e = Material 3 Expressive */
     val uiStyle: String = "glass",
     /** 首页用双列宫格 */
@@ -117,6 +123,9 @@ class SettingsStore(context: Context) {
         ttsVoice = sp.getString("ttsVoice", "cmn") ?: "cmn",
         ttsOnlineVoice = sp.getString("ttsOnlineVoice", "zh-CN-XiaoxiaoNeural") ?: "zh-CN-XiaoxiaoNeural",
         disabledSites = sp.getString("disabledSites", "") ?: "",
+        bgImage = sp.getString("bgImage", "") ?: "",
+        bgBlur = sp.getInt("bgBlur", 1),
+        bgDim = sp.getInt("bgDim", 1),
         uiStyle = sp.getString("uiStyle", "glass") ?: "glass",
         homeGrid = sp.getBoolean("homeGrid", true),
         haptics = sp.getBoolean("haptics", true),
@@ -156,6 +165,9 @@ class SettingsStore(context: Context) {
             .putString("ttsVoice", n.ttsVoice)
             .putString("ttsOnlineVoice", n.ttsOnlineVoice)
             .putString("disabledSites", n.disabledSites)
+            .putString("bgImage", n.bgImage)
+            .putInt("bgBlur", n.bgBlur)
+            .putInt("bgDim", n.bgDim)
             .putString("uiStyle", n.uiStyle)
             .putBoolean("homeGrid", n.homeGrid)
             .putBoolean("haptics", n.haptics)

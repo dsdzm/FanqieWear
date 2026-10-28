@@ -21,6 +21,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -128,6 +131,15 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
     var ttsDiagRunning by remember { mutableStateOf(false) }
     var ttsTrace by remember { mutableStateOf<String?>(null) }
     val ctx = LocalContext.current
+    // 选一张本地图片当背景；拿到持久化授权，重启后仍然可读
+    val bgPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching {
+                ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            app.settings.update { it.copy(bgImage = uri.toString()) }
+        }
+    }
     val versionName = remember {
         runCatching {
             ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName
@@ -235,6 +247,46 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                         }
                     }
                     item { AccentCard(s.accent) { v -> app.settings.update { it.copy(accent = v) } } }
+                    item {
+                        GlassCard {
+                            Column(modifier = Modifier.fillMaxWidth().padding(10.dp)) {
+                                Text("背景图", fontSize = dims.label, color = p.muted, maxLines = 1)
+                                Text(
+                                    text = if (s.bgImage.isBlank()) "未设置 · 用主题底色" else "已设置 · 主界面与阅读页共用",
+                                    fontSize = dims.label,
+                                    color = p.text,
+                                    maxLines = 1,
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Row {
+                                    Pill(
+                                        text = "选择图片",
+                                        compact = true,
+                                        selected = true,
+                                        onClick = { bgPicker.launch(arrayOf("image/*")) },
+                                    )
+                                    if (s.bgImage.isNotBlank()) {
+                                        Spacer(Modifier.width(6.dp))
+                                        Pill(
+                                            text = "清除",
+                                            compact = true,
+                                            onClick = { app.settings.update { it.copy(bgImage = "") } },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    item {
+                        ChoiceCard("背景模糊", listOf("无", "低", "中", "高"), s.bgBlur) { v ->
+                            app.settings.update { it.copy(bgBlur = v) }
+                        }
+                    }
+                    item {
+                        ChoiceCard("背景压暗", listOf("无", "低", "中", "高"), s.bgDim) { v ->
+                            app.settings.update { it.copy(bgDim = v) }
+                        }
+                    }
                     item {
                         ChoiceCard("界面缩放", UiScale.entries.map { it.label }, s.uiScale) { v ->
                             app.settings.update { it.copy(uiScale = v) }

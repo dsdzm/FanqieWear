@@ -171,7 +171,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 25 / versionName 2.7.0
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 26 / versionName 2.8.0
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -549,3 +549,51 @@ alert，页面里一条结果都没有 —— 这就是"第二次搜不到"的�
 
 入口：设置 → 操作 → 界面风格。这一版先把**材质层**做出来（卡片/背景/圆角/描边），
 页面结构没动；逐页重排是下一步。
+
+## 2.8.0：滚动位置、自定义背景、双风格细化、搜索类型
+
+### ① 右滑退出"闪一下"
+
+现象：返回后目标页总是回到页首，而转场快照里是滚动到一半的画面 —— 两者对不上，看起来就是闪。
+
+原因是页面出栈后被重新组合，`rememberScalingLazyListState` 从 0 开始。现在用
+`rememberSaveableStateHolder` + `SaveableStateProvider(dest.key())` 按页面保存状态，
+返回时滚动位置原样恢复；出栈后才 `removeState` 释放。
+
+### ② 聚合搜索改用 OkHttp
+
+`jsoup.connect` 底层是 `HttpsURLConnection`，TLS 全交给系统栈；老手表 ROM 碰到新证书链
+（娜娜用的是 **Sectigo Public Server Authentication Root R46**，笔趣阁365 用的是
+**Google Trust Services WE1**）会直接抛 SSLHandshakeException，界面上只剩一串
+`javax.net.ssl...` —— 这就是"JAVA 开头的错误"。
+
+现在整条抓取走 OkHttp（连接复用 + 更好的 TLS 协商），并把异常翻译成人话：
+
+| 异常 | 提示 |
+|---|---|
+| `UnknownHostException` | 域名解析失败（没网或 DNS 被拦） |
+| `SocketTimeoutException` | 连接超时 |
+| `SSLException` | HTTPS 证书校验失败（系统证书库太旧） |
+| HTTP >= 400 | 拒绝访问（可能被反爬或需要登录） |
+
+聚合搜索单站超时 9s → **15s**，OkHttp 连接 8s / 读取 12s。
+
+### ③ 自定义背景 + 玻璃材质
+
+- 设置 → 主题 → **背景图**：选一张本地图片，主界面与阅读页共用
+- **背景模糊** 0~3：用**降采样**实现（Coil 取 240/120/72/40px 小图再放大），
+  不依赖 `Modifier.blur`（那是 API 31+ 的 RenderEffect，手表 ROM 大多还在 9~11，用了也白搭）
+- **背景压暗** 0~3：0.15 / 0.35 / 0.55 / 0.75
+- 阅读页在有背景图时底色转透明，让图透上来
+
+### ④ 双风格 + 更多主题色
+
+玻璃：半透明卡片 + 高光描边 + 背景渐变；M3E：实心表面、无描边、26dp 大圆角、纯色底。
+
+强调色从 5 个扩到 **12 个**：赤陶 / 青瓷 / 靛蓝 / 琥珀 / 紫藤 / 玫瑰 / 松石 / 薄荷 /
+蜜桃 / 石墨 / 橙金 / 靛紫。
+
+### ⑤ 搜索页支持类型
+
+搜索页顶部加「关键词 / 类型」切换。类型模式下列出当前书源的分类（笔趣阁、七猫、番茄都有），
+点一下就按分类浏览；聚合源没有分类，会提示切到具体站点。

@@ -85,6 +85,13 @@ val AccentPacks = listOf(
     AccentPack("靛蓝", Color(0xFF6C8CFF), Color(0xFFE4B45C), Color(0xFF4560C9)),
     AccentPack("琥珀", Color(0xFFE9A13B), Color(0xFF5FB3A1), Color(0xFFB87A1F)),
     AccentPack("紫藤", Color(0xFFA98BFF), Color(0xFFE4A0B8), Color(0xFF7A5FD0)),
+    AccentPack("玫瑰", Color(0xFFF0648C), Color(0xFF8E9BFF), Color(0xFFC23A66)),
+    AccentPack("松石", Color(0xFF3FC7C7), Color(0xFFF0B429), Color(0xFF22908F)),
+    AccentPack("薄荷", Color(0xFF67D98C), Color(0xFF6C8CFF), Color(0xFF35A461)),
+    AccentPack("蜜桃", Color(0xFFFF9560), Color(0xFF66C7E8), Color(0xFFD96936)),
+    AccentPack("石墨", Color(0xFF9AA7B4), Color(0xFFE9A13B), Color(0xFF63707C)),
+    AccentPack("橙金", Color(0xFFF2A33C), Color(0xFF7E8CFF), Color(0xFFC17815)),
+    AccentPack("靛紫", Color(0xFF7B6CFF), Color(0xFF4FD1C5), Color(0xFF5442D6)),
 )
 
 /**

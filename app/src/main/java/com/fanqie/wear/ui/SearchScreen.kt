@@ -64,15 +64,24 @@ fun SearchScreen(
     var page by remember { mutableIntStateOf(0) }
     var hasMore by remember { mutableStateOf(false) }
     var trigger by remember { mutableIntStateOf(0) }
+    // 0 = 关键词搜索，1 = 按类型浏览
+    var mode by remember { mutableIntStateOf(0) }
+    var shelfId by remember { mutableStateOf<String?>(null) }
 
     val source = Source.of(sourceKey)
 
     LaunchedEffect(trigger, sourceKey) {
-        if (trigger == 0 || keyword.isBlank()) return@LaunchedEffect
+        if (trigger == 0) return@LaunchedEffect
+        val byShelf = mode == 1
+        if (byShelf && shelfId == null) return@LaunchedEffect
+        if (!byShelf && keyword.isBlank()) return@LaunchedEffect
         loading = true
         error = null
         page = 0
-        runCatching { app.sources.of(source).search(keyword, 0) }
+        runCatching {
+            if (byShelf) app.sources.of(source).browse(shelfId!!, 0)
+            else app.sources.of(source).search(keyword, 0)
+        }
             .onSuccess {
                 books = it
                 hasMore = it.isNotEmpty()
@@ -111,6 +120,25 @@ fun SearchScreen(
             item { TopBar(title = "搜索", onBack = onBack) }
 
             item {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Pill(text = "关键词", selected = mode == 0, compact = true, onClick = {
+                        if (mode != 0) {
+                            mode = 0
+                            books = emptyList()
+                            searched = false
+                        }
+                    })
+                    Pill(text = "类型", selected = mode == 1, compact = true, onClick = {
+                        if (mode != 1) {
+                            mode = 1
+                            books = emptyList()
+                            searched = false
+                        }
+                    })
+                }
+            }
+
+            if (mode == 0) item {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -162,14 +190,43 @@ fun SearchScreen(
                 }
             }
 
-            item {
-                Pill("开始搜索", selected = true, onClick = { trigger++ })
+            if (mode == 0) {
+                item { Pill("开始搜索", selected = true, onClick = { trigger++ }) }
+            } else {
+                val shelves = app.sources.of(source).shelves
+                if (shelves.isEmpty()) {
+                    item {
+                        HintBox("${source.label}不支持按类型浏览") { }
+                    }
+                } else {
+                    shelves.chunked(2).forEach { pair ->
+                        item {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                pair.forEach { sh ->
+                                    Pill(
+                                        text = sh.name,
+                                        selected = shelfId == sh.id,
+                                        compact = true,
+                                        onClick = {
+                                            shelfId = sh.id
+                                            trigger++
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             if (loading) item { LoadingBox("正在搜索") }
             if (error != null) item { HintBox(error!!, "重试") { trigger++ } }
             if (!loading && searched && books.isEmpty() && error == null) {
-                item { HintBox("${source.label}没有找到相关作品") }
+                item {
+                    HintBox(
+                        if (mode == 1) "${source.label}这个分类下没有内容" else "${source.label}没有找到相关作品",
+                    ) { trigger++ }
+                }
             }
 
             items(books.size) { i ->

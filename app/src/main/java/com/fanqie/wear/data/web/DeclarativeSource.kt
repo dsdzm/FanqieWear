@@ -19,6 +19,9 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import android.util.Log
+import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -393,6 +396,15 @@ class DeclarativeSource(
 
     private val catalogCache = HashMap<String, List<Chapter>>()
 
+    /** 共用一个客户端：连接复用、TLS 配置统一 */
+    private val http = okhttp3.OkHttpClient.Builder()
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(12, java.util.concurrent.TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .build()
+
     /** 会话 Cookie：站点把限流、会话状态都存在这里，必须跨请求带着 */
     private val cookieJar = LinkedHashMap<String, String>()
 
@@ -477,29 +489,74 @@ class DeclarativeSource(
         return fetchRaw(url, method, body)
     }
 
+    /**
+     * 真正的网络请求。
+     *
+     * 用 OkHttp 而不是 Jsoup.connect：
+     *  - jsoup 底层是 HttpsURLConnection，TLS 协商完全交给系统栈；
+     *    老手表 ROM 上遇到新证书链（如 Sectigo R46）会直接抛 SSLHandshakeException，
+     *    而界面只能显示一串 `java.xxx` —— 这就是"娜娜显示 JAVA 开头错误"的来源。
+     *  - OkHttp 自带的 TLS 配置更完整，且错误类型明确，能翻译成人话。
+     */
     private fun fetchRaw(url: String, method: String = "GET", body: String = ""): Document {
-        val conn = Jsoup.connect(url)
-            .userAgent(UA)
+        val builder = Request.Builder().url(url)
+            .header("User-Agent", UA)
             .header("Accept-Language", "zh-CN,zh;q=0.9")
-            .timeout(15000)
-            .ignoreHttpErrors(true)
-            .followRedirects(true)
-        if (method.equals("POST", true)) {
-            conn.method(org.jsoup.Connection.Method.POST)
-            if (body.isNotBlank()) {
-                body.split("&").forEach { kv ->
-                    val k = kv.substringBefore('='); val v = kv.substringAfter('=', "")
-                    conn.data(k, java.net.URLDecoder.decode(v, "UTF-8"))
-                }
-            }
-        }
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
         if (cookieJar.isNotEmpty()) {
-            conn.header("Cookie", cookieJar.entries.joinToString("; ") { "${it.key}=${it.value}" })
+            builder.header("Cookie", cookieJar.entries.joinToString("; ") { "${it.key}=${it.value}" })
         }
-        val doc = runCatching { conn.execute().also { resp -> resp.cookies().forEach { (k, v) -> cookieJar[k] = v } }.parse() }
-            .getOrElse { throw ApiException("${rule.name} 连不上：${it.message?.take(40)}") }
-        if (doc.title().isBlank() && doc.body() == null) throw ApiException("${rule.name} 返回了空页面")
-        return doc
+        if (method.equals("POST", true)) {
+            val form = body.split("&").filter { it.isNotBlank() }.joinToString("&") { kv ->
+                val k = kv.substringBefore('=')
+                val v = if (kv.contains('=')) kv.substringAfter('=') else ""
+                "$k=${enc(java.net.URLDecoder.decode(v, "UTF-8"))}"
+            }
+            builder.post(form.toRequestBody("application/x-www-form-urlencoded; charset=UTF-8".toMediaType()))
+        } else {
+            builder.get()
+        }
+
+        val resp = try {
+            http.newCall(builder.build()).execute()
+        } catch (t: Throwable) {
+            throw ApiException("${rule.name} ${friendly(t)}")
+        }
+
+        resp.use { r ->
+            // 收 Cookie：限流、会话状态都靠它
+            r.headers("Set-Cookie").forEach { raw ->
+                val pair = raw.substringBefore(';')
+                val k = pair.substringBefore('=').trim()
+                val v = pair.substringAfter('=', "").trim()
+                if (k.isNotEmpty()) cookieJar[k] = v
+            }
+            val bytes = runCatching { r.body?.bytes() }.getOrNull()
+            if (bytes == null || bytes.isEmpty()) {
+                throw ApiException("${rule.name} 返回空内容（HTTP ${r.code}）")
+            }
+            if (r.code >= 400) {
+                throw ApiException("${rule.name} 拒绝访问（HTTP ${r.code}），可能被反爬或需要登录")
+            }
+            val charset = r.body?.contentType()?.charset()?.name()
+            val doc = Jsoup.parse(java.io.ByteArrayInputStream(bytes), charset, r.request.url.toString())
+            if (doc.title().isBlank() && doc.body() == null) throw ApiException("${rule.name} 返回了空页面")
+            return doc
+        }
+    }
+
+    /** 把异常翻译成用户能看懂的一句话，别再往界面上丢 `java.xxx` */
+    private fun friendly(t: Throwable): String {
+        val msg = t.message.orEmpty()
+        return when {
+            t is java.net.UnknownHostException -> "域名解析失败（可能是没网或被 DNS 拦截）"
+            t is java.net.SocketTimeoutException -> "连接超时"
+            t is javax.net.ssl.SSLException -> "HTTPS 证书校验失败（手表系统证书库太旧）"
+            msg.contains("SSL", true) || msg.contains("Cert", true) -> "HTTPS 证书校验失败"
+            t is java.net.ConnectException -> "连不上服务器"
+            msg.contains("timeout", true) -> "连接超时"
+            else -> msg.take(60).ifBlank { t.javaClass.simpleName }
+        }
     }
 
     /** 把 HTML 转成"段落用换行分隔"的纯文本，<br> 与块级标签都算换行 */

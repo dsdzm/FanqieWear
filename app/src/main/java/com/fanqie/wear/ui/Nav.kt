@@ -11,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -51,6 +52,9 @@ sealed interface Dest {
     data class Reader(val bookId: String, val itemId: String, val title: String, val source: Source) : Dest
 }
 
+/** 每个页面一个稳定 key，用来保存/恢复滚动位置等 rememberSaveable 状态 */
+private fun Dest.key(): String = toString()
+
 /**
  * 极简导航栈：层级浅（最多 4~5 层），用列表保存即可。
  *
@@ -81,6 +85,15 @@ fun FanqieWearApp() {
     // 与 stack 对齐：belowStack[i] = 离开 stack[i] 时截下的画面
     var belowStack by remember { mutableStateOf(List<ImageBitmap?>(initial.size) { null }) }
 
+    /**
+     * 按页面保存状态。
+     *
+     * 以前每次 pop 回来页面都是重新组合的，`rememberScalingLazyListState` 从 0 开始，
+     * 于是"快照里是滚动到一半的画面、切回真实页却跳到页首"，看起来就是闪一下。
+     * 这里用 SaveableStateHolder 按 Dest 作 key 保存，返回时滚动位置原样恢复。
+     */
+    val stateHolder = rememberSaveableStateHolder()
+
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
     val motion = rememberNavMotion(scope)
@@ -104,9 +117,12 @@ fun FanqieWearApp() {
         if (stack.size <= 1 || busy) return
         busy = true
         motion.below = belowStack.getOrNull(stack.size - 2)
+        val leaving = stack.last().key()
         motion.exit {
             stack = stack.dropLast(1)
             belowStack = belowStack.dropLast(1)
+            // 页面已经出栈，它保存的状态没必要再留着
+            stateHolder.removeState(leaving)
             motion.settle()
             busy = false
         }
@@ -126,8 +142,14 @@ fun FanqieWearApp() {
         CompositionLocalProvider(LocalDisplayConfig provides display) {
             val p = LocalPalette.current
             Box(modifier = Modifier.fillMaxSize()) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    drawRect(brush = Brush.verticalGradient(listOf(p.bgTop, p.bgBottom)))
+                AppBackdrop(
+                    image = settings.bgImage,
+                    blur = settings.bgBlur,
+                    dim = settings.bgDim,
+                ) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        drawRect(brush = Brush.verticalGradient(listOf(p.bgTop, p.bgBottom)))
+                    }
                 }
 
                 // 下层：返回后看到的页面（快照）。只在转场期间画，平时不白画一层位图
@@ -181,7 +203,10 @@ fun FanqieWearApp() {
                             onCommit = { pop() },
                         ),
                 ) {
-                    Screen(dest = stack.last(), push = ::push, pop = ::pop)
+                    val top = stack.last()
+                    stateHolder.SaveableStateProvider(top.key()) {
+                        Screen(dest = top, push = ::push, pop = ::pop)
+                    }
                 }
             }
         }

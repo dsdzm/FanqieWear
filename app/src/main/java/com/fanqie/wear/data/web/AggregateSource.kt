@@ -49,9 +49,9 @@ class AggregateSource(private val sites: () -> List<DeclarativeSource>) : BookSo
             val jobs = list.map { s ->
                 async {
                     try {
-                        val r = withTimeoutOrNull(9000) { s.search(keyword, page) }
+                        val r = withTimeoutOrNull(15000) { s.search(keyword, page) }
                         if (r == null) {
-                            errors[s.displayName] = "超时（9 秒没响应）"
+                            errors[s.displayName] = "超时（15 秒没响应）"
                             emptyList()
                         } else {
                             r.map { b -> b.copy(id = "${s.siteKey}|${b.id}", source = Source.AGG) }
@@ -110,7 +110,7 @@ class AggregateSource(private val sites: () -> List<DeclarativeSource>) : BookSo
         val cleanAuthor = author.substringBefore('·').trim()
         sites().filter { it.capability.search }.map { s ->
             async {
-                val r = runCatching { withTimeoutOrNull(9000) { s.search(title, 0) } }.getOrNull().orEmpty()
+                val r = runCatching { withTimeoutOrNull(15000) { s.search(title, 0) } }.getOrNull().orEmpty()
                 r.filter { it.title.replace(Regex("\\s+"), "") == title.replace(Regex("\\s+"), "") }
                     .filter { cleanAuthor.isBlank() || it.author.isBlank() || it.author.contains(cleanAuthor) }
                     .map { b -> b.copy(id = "${s.siteKey}|${b.id}", author = decorate(b.author, s.displayName)) }

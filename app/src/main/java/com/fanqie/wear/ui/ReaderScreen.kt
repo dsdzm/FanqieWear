@@ -269,7 +269,8 @@ fun ReaderScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(bg)
+            // 设了自定义背景图就透明，让 Nav 层的背景透上来（全局统一压暗）
+            .background(if (settings.bgImage.isBlank()) bg else Color.Transparent)
             .onRotaryScrollEvent { event ->
                 val down = event.verticalScrollPixels > 0f
                 when {
