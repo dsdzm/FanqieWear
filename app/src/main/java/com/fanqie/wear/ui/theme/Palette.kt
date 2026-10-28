@@ -120,11 +120,13 @@ fun paletteFor(theme: Int, accentIndex: Int = 0, styleKey: String = "glass"): Pa
             cardRadiusDp = if (base.isLight) 26f else 26f,
         )
     } else {
-        // 玻璃：卡片压薄一点让背景透上来，描边抬亮
+        // 玻璃：**纯色半透明填充**（不再做渐变，网易云就是这么干的）+ 高光描边。
+        // 深色下白 14%，浅色下白 72%（浅色底太亮，白 14% 会彻底消失）。
+        val fill = if (base.isLight) Color(0xB8FFFFFF) else Color(0x24FFFFFF)
         base.copy(
-            card = base.card.copy(alpha = if (base.isLight) 0.86f else 0.62f),
-            cardHigh = base.cardHigh.copy(alpha = if (base.isLight) 0.94f else 0.74f),
-            cardBorder = if (base.isLight) Color(0x14000000) else Color(0x2EFFFFFF),
+            card = fill,
+            cardHigh = fill,
+            cardBorder = if (base.isLight) Color(0x14000000) else Color(0x30FFFFFF),
             glass = true,
             cardRadiusDp = 20f,
         )

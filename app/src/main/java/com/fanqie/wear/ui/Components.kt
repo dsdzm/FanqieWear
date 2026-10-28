@@ -23,6 +23,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.Color
@@ -62,12 +65,20 @@ fun GlassCard(
     val enabled = LocalDisplayConfig.current.haptics
     val corner = shape ?: RoundedCornerShape(if (p.cardRadiusDp > 0f) p.cardRadiusDp.dp else dims.corner)
     // 玻璃：半透明填充 + 高光描边，背景能透上来；M3E：实心表面、无描边、大圆角
-    val fill: Brush = if (p.glass) Brush.verticalGradient(listOf(p.cardHigh, p.card)) else SolidColor(p.card)
+    val fill: Brush = SolidColor(p.card)
     Box(
         modifier = modifier
             .clip(corner)
             .background(fill, corner)
-            .then(if (p.glass) Modifier.border(1.dp, p.cardBorder, corner) else Modifier)
+            .then(
+                if (p.glass) {
+                    Modifier
+                        .border(1.dp, p.cardBorder, corner)
+                        .glassEdge(if (p.cardRadiusDp > 0f) p.cardRadiusDp.dp else dims.corner)
+                } else {
+                    Modifier
+                },
+            )
             .then(
                 if (onClick != null) {
                     Modifier.clickable {
@@ -425,4 +436,19 @@ fun SectionLabel(text: String) {
         Spacer(Modifier.width(5.dp))
         Text(text = text, fontSize = dims.label, color = p.muted, maxLines = 1)
     }
+}
+
+/** 玻璃边缘高光：顶部一段白，往下迅速消失（网易云 glassEdgeHighlight 的做法） */
+private val GlassEdgeBrush = Brush.verticalGradient(
+    0f to Color.White.copy(alpha = 0.18f),
+    0.42f to Color.Transparent,
+)
+
+private fun Modifier.glassEdge(radius: Dp): Modifier = drawWithContent {
+    drawContent()
+    drawRoundRect(
+        brush = GlassEdgeBrush,
+        cornerRadius = CornerRadius(radius.toPx(), radius.toPx()),
+        style = Stroke(width = 1.dp.toPx()),
+    )
 }

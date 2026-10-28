@@ -171,7 +171,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle :app:assembleRelease         # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 26 / versionName 2.8.0
+- minSdk 26（Android 8.0）｜targetSdk 34｜compileSdk 35｜versionCode 27 / versionName 2.9.0
 - Kotlin 2.0.21｜AGP 8.7.3｜Gradle 8.9｜JDK 17+
 - 依赖：Wear Compose Material3 1.5.6、Wear Compose Foundation 1.5.6、Compose BOM 2024.12.01、OkHttp、kotlinx-serialization、Coil
 
@@ -597,3 +597,40 @@ alert，页面里一条结果都没有 —— 这就是"第二次搜不到"的�
 
 搜索页顶部加「关键词 / 类型」切换。类型模式下列出当前书源的分类（笔趣阁、七猫、番茄都有），
 点一下就按分类浏览；聚合源没有分类，会提示切到具体站点。
+
+## 2.9.0：玻璃材质对齐网易云、转场不再闪、主页右滑退出
+
+### ① 玻璃主题按网易云的做法重做
+
+参考 `netmusiclite-test` 的 `CapsuleCard` / `glassEdgeHighlight`：
+
+- 卡片填充从「渐变」改成 **纯色半透明**（深色 白 14% / 浅色 白 72%），和它一致
+- 边框改成 **顶部高光描边**：`Brush.verticalGradient(0f → 白 18%, 0.42f → 透明)`，
+  只在上沿亮一下，往下迅速消失 —— 这是玻璃感的关键，平铺的 1dp 白边做不到
+- 去掉卡片自身的渐变，避免和背景图叠在一起发灰
+
+### ② 转场闪屏
+
+三个原因都处理了：
+
+1. **下层快照以前跟着缩 0.94→1**，和新页面 1.0 对不齐，衔接那一下错位 → 现在固定 1.0，一像素不动
+2. **同一帧撤快照**：真实页面要下一帧才画出来，中间空一帧 → 现在等 `withFrameNanos` 两次再撤
+3. **裁剪/圆角**：`clip` + `shape` 每帧都要开离屏图层，既贵又会在边缘产生描边闪烁 → 全部去掉
+
+### ③ 卡顿
+
+- 变换层只在转场期间挂载，平时不再走图层合成
+- 去掉动画层的 `clip`/`shape`（离屏渲染是手表上最贵的一项）
+
+### ④ 主页右滑退出
+
+栈底（主页）右滑不再无响应，直接退出应用；有下层页面时仍然是返回上一页。
+
+### ⑤ 站点只留能用的
+
+实测（不是猜）：`xbiquge.so` 已超时下线；`biquge5200.cc` 301 到 `bqg9.xyz` 后搜索 404；
+`shuquge.com` 301 到 `xshuquge.net` 后搜索只剩空页。这三个已从配置里移除。
+
+现在保留：**biquge365**（实测 216 条结果）、**娜娜阅读**、**7novel**（仅书号）。
+另外试了 11 个候选站（bqgui/23qb/69shu/ddxs/ptwxz/b520/bqg70…），
+在本环境全部 404/403/不可达 —— 没把握的规则不敢往里塞，塞了只会变成更多"404"。

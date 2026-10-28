@@ -13,6 +13,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.ImageBitmap
@@ -95,7 +97,7 @@ fun FanqieWearApp() {
     val stateHolder = rememberSaveableStateHolder()
 
     val scope = rememberCoroutineScope()
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val motion = rememberNavMotion(scope)
     var busy by remember { mutableStateOf(false) }
 
@@ -125,6 +127,12 @@ fun FanqieWearApp() {
             stateHolder.removeState(leaving)
             motion.settle()
             busy = false
+            // 等真实页面画完两帧再撤快照，避免中间空一帧
+            scope.launch {
+                withFrameNanos { }
+                withFrameNanos { }
+                motion.finish()
+            }
         }
     }
 
@@ -163,17 +171,8 @@ fun FanqieWearApp() {
                             .fillMaxSize()
                             .zIndex(0f)
                             // 动画值全部在绘制层读：拖动时只重绘，不触发重组
-                            .graphicsLayer {
-                                val s = motion.belowScale
-                                scaleX = s
-                                scaleY = s
-                                // 被盖住时压暗一点，露出来时回到全亮
-                                alpha = (1f - 0.3f * motion.keep).coerceIn(0f, 1f)
-                                clip = true
-                                shape = androidx.compose.foundation.shape.RoundedCornerShape(
-                                    motion.belowRadiusDp.dp,
-                                )
-                            },
+                            // 不做缩放/裁剪：快照必须和新页面 1:1 对齐，否则衔接处会闪
+                            .graphicsLayer { alpha = (1f - 0.25f * motion.keep).coerceIn(0f, 1f) },
                     )
                 }
 
@@ -182,25 +181,31 @@ fun FanqieWearApp() {
                     modifier = Modifier
                         .fillMaxSize()
                         .zIndex(1f)
-                        .graphicsLayer {
-                            val s = motion.topScale
-                            scaleX = s
-                            scaleY = s
-                            translationX = motion.shift
-                            alpha = motion.fade
-                            clip = motion.keep < 0.999f
-                            shape = androidx.compose.foundation.shape.RoundedCornerShape(
-                                ((1f - motion.keep) * 18f).dp,
-                            )
-                        }
+                        // 只在转场期间挂变换层：平时 alpha=1 也要走一遍图层合成，纯浪费
+                        .then(
+                            if (motion.active) {
+                                Modifier.graphicsLayer {
+                                    val s = motion.topScale
+                                    scaleX = s
+                                    scaleY = s
+                                    translationX = motion.shift
+                                    alpha = motion.fade
+                                }
+                            } else {
+                                Modifier
+                            },
+                        )
                         .navSwipeBack(
-                            enabled = settings.edgeBack && stack.size > 1,
+                            enabled = settings.edgeBack,
                             motion = motion,
                             onStart = {
                                 motion.below = belowStack.getOrNull(stack.size - 2)
                                 motion.dragStart()
                             },
-                            onCommit = { pop() },
+                            onCommit = {
+                                // 栈底（主页）右滑 = 退出应用
+                                if (stack.size > 1) pop() else runCatching { context.findActivity()?.finish() }
+                            },
                         ),
                 ) {
                     val top = stack.last()

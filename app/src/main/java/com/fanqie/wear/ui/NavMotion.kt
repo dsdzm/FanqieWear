@@ -71,11 +71,13 @@ class NavMotion(private val scope: CoroutineScope) {
     /** 上层缩放：1 → 0.66（跟手）→ 0.52（离场） */
     val topScale: Float get() = 0.52f + 0.48f * keep
 
-    /** 下层缩放：被盖住时略小，露出来时回到 1 */
-    val belowScale: Float get() = 0.94f + 0.06f * (1f - keep)
-
-    /** 下层圆角（跟手越深越圆，看起来像上面那张卡浮起来） */
-    val belowRadiusDp: Float get() = 10f + 8f * (1f - keep)
+    /**
+     * 下层缩放。
+     *
+     * 固定 1.0：快照本来就是"返回后看到的页面"，一像素都不能动 ——
+     * 之前这里跟着缩 0.94→1，和新页面 1.0 对不齐，衔接那一下就是闪。
+     */
+    val belowScale: Float get() = 1f
 
     /**
      * 新页面入场：从略小撑到满屏。
@@ -136,13 +138,22 @@ class NavMotion(private val scope: CoroutineScope) {
         }
     }
 
-    /** 出栈完成：立刻复位，新页面顶上来时正好是 1.0/1.0，不会闪 */
+    /**
+     * 出栈完成：立刻复位，新页面顶上来时正好是 1.0/1.0。
+     *
+     * 注意这里**不**关 active —— 真实页面要等下一帧才画出来，如果同一帧把下层快照撤掉，
+     * 中间会空一帧（就是"闪一下"）。调用方会在两帧后调 [finish]。
+     */
     fun settle() {
         anim?.cancel()
         anim = null
         keep = 1f
         fade = 1f
         shift = 0f
+    }
+
+    /** 新页面已经画出来了，可以撤掉下层快照 */
+    fun finish() {
         active = false
     }
 }
@@ -257,7 +268,7 @@ private fun isBlank(bmp: Bitmap): Boolean = runCatching {
     true
 }.getOrDefault(false)
 
-private fun Context.findActivity(): Activity? {
+fun Context.findActivity(): Activity? {
     var c: Context = this
     while (c is ContextWrapper) {
         if (c is Activity) return c
