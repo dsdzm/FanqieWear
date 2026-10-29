@@ -154,9 +154,21 @@ fun FanqieWearApp() {
                                 // 旧版共用一份状态，出栈那一帧身份互换会读到对方的缩放值，
                                 // 于是保留下来的页面被缩一下再弹回 —— 就是"所有控件闪一下"。
                                 .graphicsLayer {
-                                    scaleX = entry.fx.scale
-                                    scaleY = entry.fx.scale
-                                    alpha = entry.fx.alpha
+                                    // 非转场时下层一律不画。
+                                    // 页面内容本身多数是透明底（背景由全局 AppBackdrop 提供），
+                                    // 下层要是照常绘制，栈顶页的透明区域就会直接透出下面那页的内容
+                                    // —— 也就是"背景透明、能看到下层的字"。
+                                    // 组合树仍然保留（只是不绘制），返回时依旧不会重建。
+                                    val shown = isTop || nav.revealing
+                                    if (!shown) {
+                                        alpha = 0f
+                                        // 双保险：同时挪出可视区，确保任何 ROM 上都被裁掉
+                                        translationX = -10000f
+                                    } else {
+                                        scaleX = entry.fx.scale
+                                        scaleY = entry.fx.scale
+                                        alpha = entry.fx.alpha
+                                    }
                                 },
                         ) {
                             CompositionLocalProvider(LocalPageActive provides isTop) {
@@ -213,6 +225,15 @@ private class NavController(private val scope: CoroutineScope) : NavBackHost {
     var slots by mutableStateOf<List<Entry?>>(listOf(null, null))
         private set
 
+    /**
+     * 是否存在「正在变换的栈顶」：入场动画、出栈动画、手势拖拽都算。
+     *
+     * 只有在它为 true 时下层页面才需要被绘制（上层缩小/淡出时露出的是它）。
+     * 平时下层不绘制 —— 否则页面自身的透明区域会透出下面那页的内容。
+     */
+    var revealing by mutableStateOf(false)
+        private set
+
     var stateHolder: SaveableStateHolder? = null
     var exitApp: () -> Unit = {}
 
@@ -235,6 +256,7 @@ private class NavController(private val scope: CoroutineScope) : NavBackHost {
         if (stack.isNotEmpty()) return
         stack = initial.map { Entry(seq++, it) }
         assignSlots()
+        revealing = false
     }
 
     /**
@@ -264,6 +286,8 @@ private class NavController(private val scope: CoroutineScope) : NavBackHost {
         e.fx.scale = NavFx.ENTER_SCALE
         stack = stack + e
         assignSlots()
+        // 入场**不**打开下层绘制：新页从 0.94 放大时四周露出的是背景，
+        // 而不是旧页的内容 —— 否则新页里任何透明的地方都会透出下面那页。
         animatePage(
             scope, jobs, e.id, e.fx,
             toScale = 1f, toAlpha = 1f,
@@ -284,6 +308,8 @@ private class NavController(private val scope: CoroutineScope) : NavBackHost {
      */
     private fun leave(e: Entry, onGone: (() -> Unit)? = null) {
         transitioning = true
+        // 退场页缩小淡出的过程中，露出来的必须是下面那页的内容
+        revealing = true
         animatePage(
             scope, jobs, e.id, e.fx,
             toScale = NavFx.EXIT_SCALE, toAlpha = 0f,
@@ -300,6 +326,7 @@ private class NavController(private val scope: CoroutineScope) : NavBackHost {
             }
             jobs.remove(e.id)
             transitioning = false
+            revealing = false
         }
     }
 
@@ -315,6 +342,8 @@ private class NavController(private val scope: CoroutineScope) : NavBackHost {
         dragX = 0f
         baseScale = e.fx.scale
         baseAlpha = e.fx.alpha
+        // 跟手缩小期间要露出下面那页
+        revealing = true
     }
 
     override fun onDrag(dx: Float) {
@@ -329,27 +358,32 @@ private class NavController(private val scope: CoroutineScope) : NavBackHost {
     override fun onDragEnd() {
         val e = dragEntry ?: return
         dragEntry = null
-        if (transitioning) return
+        if (transitioning) {
+            // 极少见：拖动期间被别的路径触发了出栈，直接归位，别把页面留在半透明状态
+            springBack(e, clearReveal = true)
+            return
+        }
         if (dragX >= thresholdPx) {
             // 栈底右滑 = 退出应用
             if (stack.size <= 1) leave(e) { exitApp() } else leave(e)
         } else {
-            springBack(e)
+            // 没到阈值：回弹，回弹结束就不必再画下层了
+            springBack(e, clearReveal = true)
         }
     }
 
     override fun onDragCancel() {
         val e = dragEntry ?: return
         dragEntry = null
-        springBack(e)
+        springBack(e, clearReveal = true)
     }
 
-    private fun springBack(e: Entry) {
+    private fun springBack(e: Entry, clearReveal: Boolean = false) {
         animatePage(
             scope, jobs, e.id, e.fx,
             toScale = 1f, toAlpha = 1f,
             ms = NavFx.SPRING_MS, easing = enterEase,
-        )
+        ) { if (clearReveal) revealing = false }
     }
 
     /** 稳定引用，避免每次组合都造新 lambda 触发整页重组 */
