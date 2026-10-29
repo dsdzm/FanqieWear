@@ -211,6 +211,8 @@ class DownloadManager(
                 var done = total - todo.size
                 var failed = 0
                 var lastError = ""
+                // 连续失败计数：站点整个挂掉时别在这儿空转 535 章 × 3 次重试
+                var streak = 0
 
                 publish(bookId, title, total, done, failed)
                 // 屏幕一灭系统就会挂起协程，长下载必须在灭屏后继续跑
@@ -226,12 +228,19 @@ class DownloadManager(
                         if (r != null) {
                             store.saveChapter(bookId, r)
                             done++
+                            streak = 0
                         } else {
                             failed++
+                            streak++
                             if (lastError.isBlank()) lastError = "章节页超时（站点返回 504）"
                         }
                     }
                     publish(bookId, title, total, done, failed)
+                    // 连着一批全失败 = 站点整体不可用（不是某几章抽风），停下来比空转有用
+                    if (streak >= BREAK_AFTER) {
+                        lastError = "站点连续 $streak 章无响应，已暂停（站点侧故障，恢复后点「继续下载」即可续传）"
+                        break
+                    }
                 }
 
                 store.writeMeta(bookId, title, cover, total, targets.firstOrNull()?.itemId, source, done)
@@ -308,5 +317,13 @@ class DownloadManager(
 
         /** 单章最多试几次 */
         const val CHAPTER_TRIES = 3
+
+        /**
+         * 连续失败多少章就认定"站点整体不可用"并暂停。
+         *
+         * 七小说源站挂掉时每次请求都要等满读超时，535 章 × 3 次重试能把电池耗掉一大截，
+         * 用户看到的只是进度条一动不动。连着 8 章（约两批）全废就基本可以断定是站点的问题。
+         */
+        const val BREAK_AFTER = 8
     }
 }

@@ -1,131 +1,134 @@
 {
-  "version": 1,
-  "sites": [
-    {
-      "key": "biquge365",
-      "name": "笔趣阁365",
-      "base": "https://www.biquge365.net",
-      "note": "免登录 · 已实测",
-      "search": {
-        "path": "/s.php",
-        "method": "POST",
-        "body": "type=articlename&s={q}",
-        "list": "li:has(a[href^=/book/])",
-        "title": "a[href^=/book/]",
-        "link": "a[href^=/book/]@href",
-        "author": "span"
-      },
-      "detail": {
-        "path": "/{id}/",
-        "title": "h1",
-        "author": ".xinxi",
-        "intro": ".x3",
-        "cover": ".zhutu img@src"
-      },
-      "catalog": {
-        "path": "/newbook/{num}/",
-        "list": "ul.info a[href^=/chapter/]",
-        "link": "@href"
-      },
-      "chapter": {
-        "path": "{itemId}",
-        "content": "#txt",
-        "remove": [
-          "script",
-          "style",
-          ".ads",
-          "div[align=center]"
-        ]
-      }
-    },
-    {
-      "key": "nana00",
-      "name": "娜娜阅读",
-      "base": "https://www.nana00.com",
-      "note": "免登录 · 自动建会话 · 搜索间隔 10 秒",
-      "warmup": "/",
-      "search": {
-        "path": "/search/",
-        "method": "POST",
-        "body": "type=articlename&searchkey={q}",
-        "list": "ul.txt-list li",
-        "title": "span.s2 a",
-        "link": "span.s2 a@href",
-        "author": "span.s4",
-        "intervalMs": 10500
-      },
-      "detail": {
-        "path": "/{id}/",
-        "title": "h1.novel_title, h1",
-        "author": ".info .fix p:contains(作者)",
-        "intro": "#m_desc, .desc",
-        "cover": ".imgbox img@src"
-      },
-      "catalog": {
-        "path": "/{id}/",
-        "list": "ul.section-list li a",
-        "link": "@href",
-        "reverse": true
-      },
-      "chapter": {
-        "path": "{itemId}",
-        "content": "#content",
-        "remove": [
-          "script",
-          "style",
-          "div[align=center]",
-          ".bottem"
-        ],
-        "prev": "a#prev_url@href",
-        "next": "a#next_url@href"
-      }
-    },
-    {
-      "key": "seven",
-      "name": "七小说 7novel",
-      "base": "https://7novel.com",
-      "note": "站内搜索可用 · 也可贴书号/链接",
-      "directSearch": true,
-      "detail": {
-        "path": "/cn/books/{id}",
-        "title": "meta[property=og:title]@content",
-        "titleTrim": " - 7novel.com",
-        "intro": "meta[name=description]@content",
-        "cover": "img.object-cover@src",
-        "author": "a[href*=author]"
-      },
-      "catalog": {
-        "path": "/cn/books/{id}",
-        "list": "chapters:",
-        "json": true,
-        "link": "cn/chapters/{id}",
-        "reverse": true
-      },
-      "chapter": {
-        "path": "{itemId}",
-        "content": "div.prose",
-        "remove": [
-          "script",
-          "style"
-        ]
-      },
-      "search": {
-        "path": "https://7novel.com./cn%2Fbooks/?q={q}",
-        "echo": "div[data-flux-badge]",
-        "list": "div.grid.grid-cols-3 > div.group",
-        "title": "img@alt",
-        "link": "a[href*=/cn/books/]@href",
-        "linkStrip": "cn/books/",
-        "mirrors": [
-          "https://7novel.com./cn%2Fbooks?q={q}",
-          "https://7novel.com./cn/books/?q={q}",
-          "https://7novel.com./cn/books?q={q}",
-          "https://7novel.com/cn%2Fbooks/?q={q}",
-          "https://7novel.com/cn%2Fbooks?q={q}",
-          "https://7novel.com/cn/books/?q={q}",
-          "https://7novel.com/cn/books?q={q}"
-        ]
-      }
-    }
-  ]
+ "version": 1,
+ "sites": [
+  {
+   "key": "biquge365",
+   "name": "笔趣阁365",
+   "base": "https://www.biquge365.net",
+   "note": "免登录 · 已实测",
+   "search": {
+    "path": "/s.php",
+    "method": "POST",
+    "body": "type=articlename&s={q}",
+    "list": "li:has(a[href^=/book/])",
+    "title": "a[href^=/book/]",
+    "link": "a[href^=/book/]@href",
+    "author": "span"
+   },
+   "detail": {
+    "path": "/{id}/",
+    "title": "h1",
+    "author": ".xinxi",
+    "intro": ".x3",
+    "cover": ".zhutu img@src"
+   },
+   "catalog": {
+    "path": "/newbook/{num}/",
+    "list": "ul.info a[href^=/chapter/]",
+    "link": "@href"
+   },
+   "chapter": {
+    "path": "{itemId}",
+    "content": "#txt",
+    "remove": [
+     "script",
+     "style",
+     ".ads",
+     "div[align=center]"
+    ]
+   }
+  },
+  {
+   "key": "nana00",
+   "name": "娜娜阅读",
+   "base": "https://www.nana00.com",
+   "note": "免登录 · 自动建会话 · 搜索间隔 10 秒 · 目录分页自动翻页",
+   "warmup": "/",
+   "search": {
+    "path": "/search/",
+    "method": "POST",
+    "body": "type=articlename&searchkey={q}",
+    "list": "ul.txt-list li",
+    "title": "span.s2 a",
+    "link": "span.s2 a@href",
+    "author": "span.s4",
+    "intervalMs": 10500
+   },
+   "detail": {
+    "path": "/{id}/",
+    "title": "h1.novel_title, h1",
+    "author": ".info .fix p:contains(作者)",
+    "intro": "#m_desc, .desc",
+    "cover": ".imgbox img@src"
+   },
+   "catalog": {
+    "path": "/{id}/",
+    "list": "#info ~ .section-box ul.section-list li a",
+    "link": "@href",
+    "next": "a.index-container-btn:contains(下一页)@href",
+    "pageMax": 15
+   },
+   "chapter": {
+    "path": "{itemId}",
+    "content": "#content",
+    "remove": [
+     "script",
+     "style",
+     "div[align=center]",
+     ".bottem",
+     "a[rel=next]",
+     "a[rel=prev]"
+    ],
+    "prev": "a#prev_url@href",
+    "next": "a#next_url@href"
+   }
+  },
+  {
+   "key": "seven",
+   "name": "七小说 7novel",
+   "base": "https://7novel.com",
+   "note": "站内搜索可用 · 也可贴书号/链接",
+   "directSearch": true,
+   "detail": {
+    "path": "/cn/books/{id}",
+    "title": "meta[property=og:title]@content",
+    "titleTrim": " - 7novel.com",
+    "intro": "meta[name=description]@content",
+    "cover": "img.object-cover@src",
+    "author": "a[href*=author]"
+   },
+   "catalog": {
+    "path": "/cn/books/{id}",
+    "list": "chapters:",
+    "json": true,
+    "link": "cn/chapters/{id}",
+    "reverse": true
+   },
+   "chapter": {
+    "path": "{itemId}",
+    "content": "div.prose",
+    "remove": [
+     "script",
+     "style"
+    ]
+   },
+   "search": {
+    "path": "https://7novel.com./cn%2Fbooks/?q={q}",
+    "echo": "div[data-flux-badge]",
+    "list": "div.grid.grid-cols-3 > div.group",
+    "title": "img@alt",
+    "link": "a[href*=/cn/books/]@href",
+    "linkStrip": "cn/books/",
+    "mirrors": [
+     "https://7novel.com./cn%2Fbooks?q={q}",
+     "https://7novel.com./cn/books/?q={q}",
+     "https://7novel.com./cn/books?q={q}",
+     "https://7novel.com/cn%2Fbooks/?q={q}",
+     "https://7novel.com/cn%2Fbooks?q={q}",
+     "https://7novel.com/cn/books/?q={q}",
+     "https://7novel.com/cn/books?q={q}"
+    ]
+   }
+  }
+ ]
 }

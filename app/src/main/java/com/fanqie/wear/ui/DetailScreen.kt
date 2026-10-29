@@ -237,7 +237,12 @@ fun DetailScreen(
                     }
 
                     item {
-                        Pill(text = "目录 · $chapterCount 章", onClick = onChapters)
+                        // 目录拉不到时 chapterCount 是 0（详情页不再因为目录超时整体失败），
+                        // 那就别写"目录 · 0 章"这种吓人的文案，点进去再试一次
+                        Pill(
+                            text = if (chapterCount > 0) "目录 · $chapterCount 章" else "目录",
+                            onClick = onChapters,
+                        )
                     }
 
                     if (app.sources.of(source).capability.chapter) {

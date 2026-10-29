@@ -118,6 +118,16 @@ data class CatalogRule(
     val json: Boolean = false,
     /** 站点目录是"最新章节在前"，置 true 反转为正序 */
     val reverse: Boolean = false,
+    /**
+     * 目录分页：指向"下一页"的选择器（如 `a.index-container-btn:contains(下一页)@href`），
+     * 空表示目录一页到底。
+     *
+     * 笔趣阁系站点把长目录切成 `1-100章 / 101-200章 …` 一页一百条，
+     * 只抓首页的话 535 章的书只能读到前 100 章 —— 下载、阅读、进度全都跟着错。
+     */
+    val next: String = "",
+    /** 分页上限：站点把"下一页"做成回环链接时，防止无限翻下去 */
+    val pageMax: Int = 15,
 )
 
 @Serializable
@@ -399,7 +409,9 @@ class DeclarativeSource(
             cover = pick(doc, rule.detail.cover)?.let { absolute(it) },
             source = Source.AGG,
         )
-        val chapters = catalog(bookId)
+        // 目录取不到不应该把详情页一起拖死：站点挂的时候详情页能出就还能看简介、换源，
+        // 目录留给用户点进去时再报错（这里的 catalog 会跑满读超时，等于白等 10 秒）
+        val chapters = runCatching { catalog(bookId) }.getOrDefault(emptyList())
         return BookDetail(book = book, chapterCount = chapters.size, firstChapterId = chapters.firstOrNull()?.itemId)
     }
 
@@ -408,11 +420,48 @@ class DeclarativeSource(
     }
 
     private suspend fun catalogIo(bookId: String): List<Chapter> {
-        val doc = fetch(absolute(fill(rule.catalog.path, bookId)))
+        var doc = fetch(absolute(fill(rule.catalog.path, bookId)))
         val list = if (rule.catalog.json) parseJsonCatalog(doc) else parseCssCatalog(doc)
+
+        // 目录分页：100 章一页的站（笔趣阁系）只抓首页会丢掉后面大半本
+        if (rule.catalog.next.isNotBlank()) {
+            val seen = HashSet<String>()
+            var url = doc.location()
+            seen.add(url)
+            var page = 1
+            while (page < rule.catalog.pageMax) {
+                val href = pick(doc, rule.catalog.next) ?: break
+                if (href.isBlank() || href.startsWith("javascript", true)) break
+                url = absolute(href)
+                if (!seen.add(url)) break
+                val next = runCatching { fetch(url) }.getOrNull()
+                if (next == null) {
+                    onLog("${rule.name} 目录第 ${page + 1} 页取不到，先按已取到的分页处理")
+                    break
+                }
+                val part = runCatching {
+                    if (rule.catalog.json) parseJsonCatalog(next) else parseCssCatalog(next)
+                }.getOrElse { emptyList() }
+                if (part.isEmpty()) break
+                list.addAll(part)
+                doc = next
+                page++
+            }
+        }
+
         if (rule.catalog.reverse) list.reverse()
-        catalogCache[bookId] = list
-        return list
+        // 同一 itemId 出现两次一定是站点目录错链（nana00 这本书就有 54 处：
+        // 第 4 章和第 5 章指向同一页）。留着的话读者点第 5 章会看到第 4 章的内容，
+        // 顺序也乱。保首个、去其余。
+        val cleaned = if (list.size != list.distinctBy { it.itemId }.size) {
+            val out = list.distinctBy { it.itemId }
+            onLog("${rule.name} 目录里 ${list.size - out.size} 条错链已去重")
+            ArrayList(out)
+        } else {
+            list
+        }
+        catalogCache[bookId] = cleaned
+        return cleaned
     }
 
     private fun parseCssCatalog(doc: Document): ArrayList<Chapter> {
@@ -573,14 +622,36 @@ class DeclarativeSource(
         rule.chapter.remove.forEach { sel -> runCatching { doc.select(sel).remove() } }
         val el = doc.selectFirst(rule.chapter.content)
             ?: throw ApiException("${rule.name} 正文没解析出来，站点可能改版了")
-        val text = extractText(el)
+        val sb = StringBuilder(extractText(el))
+
+        // 一章拆多页：笔趣阁系站把长章切成 `xxx.html` / `xxx_2.html` / `xxx_3.html`，
+        // 正文容器只装第 1 页。以前只读第 1 页，读者看到的是"这章怎么半截就完了"。
+        // 跟着"下一页"走：只要它指向的还是同一章的续页（去掉 _N 后身份相同）就继续拼。
+        var cursor = doc
+        var page = 1
+        while (page < CHAPTER_PAGE_MAX) {
+            val href = pick(cursor, rule.chapter.next) ?: break
+            if (href.isBlank() || href.startsWith("javascript", true)) break
+            val nextId = normalizeId(href)
+            if (nextId == itemId || pageBase(nextId) != pageBase(itemId)) break
+            val d = runCatching { fetch(absolute(href)) }.getOrNull() ?: break
+            rule.chapter.remove.forEach { sel -> runCatching { d.select(sel).remove() } }
+            val e = d.selectFirst(rule.chapter.content) ?: break
+            val t = extractText(e)
+            if (t.isBlank()) break
+            sb.append('\n').append(t)
+            cursor = d
+            page++
+        }
+        val text = sb.toString()
 
         val list = catalogCache[bookId] ?: runCatching { catalog(bookId) }.getOrDefault(emptyList())
         val idx = list.indexOfFirst { it.itemId == itemId }
 
-        // 优先用正文页自带的上一章/下一章；目录只列最新 N 章、或一章拆多页时更靠得住
+        // 上一章取首页的链接（续页的 prev 指向本章上一页，不是上一章）；
+        // 下一章取最后一页的链接（续页的 next 才是真正的下一章）。
         val pagePrev = linkId(doc, rule.chapter.prev)
-        val pageNext = linkId(doc, rule.chapter.next)
+        val pageNext = linkId(cursor, rule.chapter.next)
 
         return ChapterContent(
             itemId = itemId,
@@ -615,7 +686,9 @@ class DeclarativeSource(
         .followRedirects(true)
         .followSslRedirects(true)
         .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
-        .readTimeout(12, java.util.concurrent.TimeUnit.SECONDS)
+        // 读超时从 12 压到 10：7novel 这类站挂掉时是"连得上、一个字节不回"，
+        // 每个请求都要干等满超时才报错，翻目录 / 下载时体感就是"卡死"
+        .readTimeout(READ_TIMEOUT_S.toLong(), java.util.concurrent.TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .build()
 
@@ -657,6 +730,13 @@ class DeclarativeSource(
         .substringAfter('/', "")
         .substringBefore('?')
         .trim('/')
+
+    /**
+     * 章节内分页的统一身份：`xs74645/46768870_2.html` 与 `xs74645/46768870.html` 归为同一个。
+     * 用来判断"下一页"是本章续页还是下一章。
+     */
+    private fun pageBase(id: String): String =
+        id.replace(Regex("(_\\d+)(\\.html?)?$"), "$2").ifBlank { id }
 
     /** 取页面里的上一章/下一章链接；指向书页（以 / 结尾）的当成"没有" */
     private fun linkId(doc: Document, selector: String): String? {
@@ -772,11 +852,16 @@ class DeclarativeSource(
         val msg = t.message.orEmpty()
         return when {
             t is java.net.UnknownHostException -> "域名解析失败（可能是没网或被 DNS 拦截）"
-            t is java.net.SocketTimeoutException -> "连接超时"
+            t is java.net.SocketTimeoutException -> {
+                // 连接超时 = 根本没握上手；读超时 = 握上手了但站点一个字节都不回。
+                // 后者基本是站点侧故障（源站过载 / Cloudflare 回源卡死），说清楚能省掉一堆"我网络没问题啊"
+                if (msg.contains("connect", true)) "连不上服务器（连接超时）"
+                else "站点 ${READ_TIMEOUT_S} 秒没回数据，通常是站点侧故障 · 可换个书源"
+            }
             t is javax.net.ssl.SSLException -> "HTTPS 证书校验失败（手表系统证书库太旧）"
             msg.contains("SSL", true) || msg.contains("Cert", true) -> "HTTPS 证书校验失败"
             t is java.net.ConnectException -> "连不上服务器"
-            msg.contains("timeout", true) -> "连接超时"
+            msg.contains("timeout", true) -> "站点 ${READ_TIMEOUT_S} 秒没回数据，通常是站点侧故障 · 可换个书源"
             else -> msg.take(60).ifBlank { t.javaClass.simpleName }
         }
     }
@@ -816,6 +901,12 @@ class DeclarativeSource(
 
         /** 站点页面缓存的存活时间：2 小时内同一路径只装一个关键词（与响应头 max-age 一致） */
         private const val BUCKET_TTL_MS = 2 * 60 * 60 * 1000L
+
+        /** 读超时（秒）。挂掉的站点是"连得上、不回数据"，这个值直接决定用户干等多久 */
+        private const val READ_TIMEOUT_S = 10
+
+        /** 一章最多拼几页（`xxx_2.html` 这种续页）；防止站点把链接做成环 */
+        private const val CHAPTER_PAGE_MAX = 6
 
         const val UA =
             "Mozilla/5.0 (Linux; Android 12; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) " +
