@@ -44,7 +44,7 @@ class SiteRepository(private val context: Context, private val settings: Setting
         if (disabled == cachedDisabled) return cachedSources
         val off = disabledKeys()
         val built = rules().filter { it.enabled && it.key !in off }
-            .map { DeclarativeSource(it) }
+            .map { DeclarativeSource(it, memoDir = context.filesDir) }
         cachedSources = built
         cachedDisabled = disabled
         return built

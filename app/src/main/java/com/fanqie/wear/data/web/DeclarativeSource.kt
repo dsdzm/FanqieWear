@@ -22,6 +22,7 @@ import android.util.Log
 import okhttp3.Request
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.File
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -72,6 +73,22 @@ data class SearchRule(
      * 填了这里的值，客户端就会自己排好队，不再白搜一次。
      */
     val intervalMs: Long = 0,
+    /**
+     * 结果页会回显本次搜索词的选择器（如 7novel 的 `关键字: xxx`）。
+     *
+     * 用来识别"站点把搜索结果按 URL 路径缓存了"：缓存命中时页面回显的是**别人**的关键词，
+     * 结果跟你要的毫无关系。有这个选择器就能发现并换路径重试，而不是把错结果当成"搜不到"。
+     */
+    val echo: String = "",
+    /**
+     * 从链接里算出的 id 需要去掉的前缀。
+     *
+     * 默认 id 是"详情页路径去掉首尾斜杠"（如 `book/12345`）；
+     * 7novel 的详情页是 `/cn/books/{id}`，id 只想要那串数字，所以填 `cn/books/`。
+     */
+    val linkStrip: String = "",
+    /** 备用搜索路径：站点缓存按路径分桶时，换一条路径就能拿到真实结果 */
+    val mirrors: List<String> = emptyList(),
 )
 
 @Serializable
@@ -141,6 +158,8 @@ object SiteRules {
 class DeclarativeSource(
     private val rule: SiteRule,
     private val onLog: (String) -> Unit = {},
+    /** 本地书名库目录（filesDir）：搜过的书存这里，下次搜同一个词直接命中，不再打站点 */
+    private val memoDir: File? = null,
 ) : BookSource {
 
     override val source: Source = Source.AGG
@@ -162,21 +181,34 @@ class DeclarativeSource(
     }
 
     private suspend fun searchIo(keyword: String, page: Int): List<Book> {
+        val q = keyword.trim()
+        if (q.isEmpty()) return emptyList()
+
         val r = rule.search
-        if (r == null) {
-            // 没有搜索规则的站点（如 7novel）：允许直接贴书号或书籍链接打开
-            val hit = directId(keyword) ?: throw ApiException("${rule.name} 不支持关键词搜索")
-            return listOf(runCatching { detail(hit) }.getOrThrow().book)
+
+        // 「书号」或「书籍链接」永远优先：不经过搜索，直接开
+        if (r == null || rule.directSearch) {
+            directId(q)?.let { hit ->
+                return listOf(runCatching { detail(hit) }.getOrThrow().book)
+            }
         }
+        if (r == null) throw ApiException("${rule.name} 不支持关键词搜索")
         if (page > 0) return emptyList()
+
+        // ① 本地书名库：搜过的书秒出，断网也能用
+        val memo = memoTake(q)
+        if (memo.isNotEmpty()) {
+            onLog("${rule.name} 本地书库命中「$q」${memo.size} 条")
+            return memo
+        }
 
         // 站点限流：窗口内重复搜同一个词直接给上次的结果
         val interval = r.intervalMs
         if (interval > 0) {
             val since = System.currentTimeMillis() - lastSearchAt
             if (lastSearchAt > 0 && since < interval) {
-                searchCache[keyword]?.let {
-                    onLog("${rule.name} 距上次搜索 ${since / 1000}s，直接复用「$keyword」的结果")
+                searchCache[q]?.let {
+                    onLog("${rule.name} 距上次搜索 ${since / 1000}s，直接复用「$q」的结果")
                     return it
                 }
                 val wait = interval - since
@@ -187,35 +219,124 @@ class DeclarativeSource(
             }
         }
 
-        val url = absolute(r.path.replace("{q}", enc(keyword)))
-        val form = r.body.replace("{q}", enc(keyword))
-        var doc = fetch(url, r.method, form)
-        if (isThrottled(doc)) {
-            // 服务端回了 alert("搜索间隔: 10 秒")，等一会儿再来一次
-            val wait = (interval.takeIf { it > 0 } ?: 10_000L).coerceAtMost(MAX_BLOCK_MS)
-            onLog("${rule.name} 触发搜索间隔限制，等待 ${wait}ms 后重试")
-            delay(wait)
-            doc = fetch(url, r.method, form)
-            if (isThrottled(doc)) throw ApiException("${rule.name} 被限流了，请过 10 秒再试")
-        }
-        lastSearchAt = System.currentTimeMillis()
+        val form = r.body.replace("{q}", enc(q))
+        val urls = LinkedHashSet<String>()
+        urls.add(absolute(r.path.replace("{q}", enc(q))))
+        for (m in r.mirrors) urls.add(absolute(m.replace("{q}", enc(q))))
 
-        var out = parseSearchList(doc, r)
-        // 只有"靠会话"的站点才值得重建重试；限流型站点再打一次只会重置它的等待窗口
-        if (out.isEmpty() && rule.warmup.isNotBlank() && interval == 0L) {
-            ensureSession(force = true)
-            val retryDoc = fetchRaw(url, r.method, form)
-            if (!isThrottled(retryDoc)) {
-                out = parseSearchList(retryDoc, r)
-                if (out.isNotEmpty()) onLog("${rule.name} 重建会话后搜到 ${out.size} 条")
+        // ② 站点把搜索结果按「路径」缓存，同一路径同一时间只装得下一个关键词。
+        //    先挑「缓存里正好是这个词」的路径，再挑「空的」路径，最后才碰已知装了别的词的
+        val now = System.currentTimeMillis()
+        val fresh = { u: String -> bucket[u]?.let { now - it.second >= BUCKET_TTL_MS } ?: true }
+        val same = { u: String -> bucket[u]?.let { it.first == q && now - it.second < BUCKET_TTL_MS } ?: false }
+        val ordered = urls.filter(same) + urls.filter { fresh(it) } + urls.filter { !fresh(it) && !same(it) }
+
+        var echoOf: String? = null
+        for (url in ordered) {
+            // 每条路径单独兜底：备用路径里带了「域名尾点」，个别系统上证书校验会失败，
+            // 那种情况下必须继续试下一条，而不是让整个搜索挂掉
+            val doc = try {
+                var d = fetch(url, r.method, form)
+                if (isThrottled(d)) {
+                    val wait = (interval.takeIf { it > 0 } ?: 10_000L).coerceAtMost(MAX_BLOCK_MS)
+                    onLog("${rule.name} 触发搜索间隔限制，等待 ${wait}ms 后重试")
+                    delay(wait)
+                    d = fetch(url, r.method, form)
+                    if (isThrottled(d)) throw ApiException("${rule.name} 被限流了，请过 10 秒再试")
+                }
+                d
+            } catch (e: ApiException) {
+                throw e
+            } catch (t: Throwable) {
+                onLog("${rule.name} 这条路径打不开（${t.message?.take(24)}），换下一条")
+                continue
+            }
+            lastSearchAt = System.currentTimeMillis()
+
+            // ③ 回显校验：页面写的是别人的关键词，说明这条路径的缓存被占了，换下一条
+            val echo = pick(doc, r.echo)
+            if (echo != null) {
+                val shown = echo.replace("关键字", "").replace("關鍵字", "")
+                    .trim().trimStart(':', '：').trim()
+                if (shown.isNotBlank() && shown != q) {
+                    bucket[url] = shown to now
+                    echoOf = shown
+                    onLog("${rule.name} 该路径缓存的是「$shown」，换下一条路径")
+                    continue
+                }
+            }
+
+            var out = parseSearchList(doc, r)
+            // 只有"靠会话"的站点才值得重建重试；限流型站点再打一次只会重置它的等待窗口
+            if (out.isEmpty() && rule.warmup.isNotBlank() && interval == 0L) {
+                ensureSession(force = true)
+                val retryDoc = fetchRaw(url, r.method, form)
+                if (!isThrottled(retryDoc)) {
+                    out = parseSearchList(retryDoc, r)
+                    if (out.isNotEmpty()) onLog("${rule.name} 重建会话后搜到 ${out.size} 条")
+                }
+            }
+            if (out.isNotEmpty()) {
+                bucket[url] = q to now
+                return finishSearch(q, out)
             }
         }
-        if (out.isNotEmpty()) {
-            if (searchCache.size > 12) searchCache.clear()
-            searchCache[keyword] = out
+
+        echoOf?.let {
+            throw ApiException("${rule.name} 站内搜索被站点缓存占用（当前缓存的是「$it」），换个书名或稍后再试；也可以直接贴书号")
         }
-        onLog("${rule.name} 搜索「$keyword」得到 ${out.size} 条")
+        onLog("${rule.name} 搜索「$q」得到 0 条")
+        return emptyList()
+    }
+
+    private fun finishSearch(q: String, out: List<Book>): List<Book> {
+        if (searchCache.size > 12) searchCache.clear()
+        searchCache[q] = out
+        memoPut(out)
+        onLog("${rule.name} 搜索「$q」得到 ${out.size} 条")
         return out
+    }
+
+    // ---------------- 本地书名库（按站点分文件） ----------------
+
+    private fun memoFile(): File? = memoDir?.let { File(it, "books-${rule.key}.tsv") }
+
+    /** 搜过的书按书名/作者模糊匹配，够用了就直接返回，不再打站点 */
+    private fun memoTake(q: String): List<Book> {
+        val f = memoFile()?.takeIf { it.isFile } ?: return emptyList()
+        val out = ArrayList<Book>()
+        runCatching {
+            f.bufferedReader().useLines { lines ->
+                for (line in lines) {
+                    val p = line.split('\t')
+                    if (p.size < 2 || p[0].isBlank() || p[1].isBlank()) continue
+                    val title = p[1]
+                    val author = p.getOrElse(2) { "" }
+                    if (!title.contains(q, true) && !author.contains(q, true)) continue
+                    out.add(Book(id = p[0], title = title, author = author, source = Source.AGG))
+                    if (out.size >= 30) break
+                }
+            }
+        }
+        return out
+    }
+
+    private fun memoPut(books: List<Book>) {
+        val f = memoFile() ?: return
+        if (books.isEmpty()) return
+        runCatching {
+            val known = HashSet<String>()
+            if (f.isFile) f.bufferedReader().useLines { lines -> lines.forEach { known.add(it.substringBefore('\t')) } }
+            val add = books.filter { it.id.isNotBlank() && it.title.isNotBlank() && it.id !in known }
+            if (add.isEmpty()) return@runCatching
+            f.appendText(buildString {
+                for (b in add) {
+                    append(b.id).append('\t')
+                        .append(b.title.replace('\t', ' ')).append('\t')
+                        .append(b.author.replace('\t', ' ')).append('\n')
+                }
+            })
+        }
     }
 
     private fun parseSearchList(doc: Document, r: SearchRule): List<Book> {
@@ -224,9 +345,13 @@ class DeclarativeSource(
             val a = pick(el, r.link) ?: continue
             val title = pick(el, r.title)?.trim().orEmpty()
             if (title.isBlank()) continue
+            // linkStrip：7novel 的链接是 `/cn/books/{id}`，而详情页规则是 `/cn/books/{id}`，
+            // 去掉路径前缀后才会拼成同一个地址
+            val id = normalizeId(a).removePrefix(r.linkStrip).trim('/')
+            if (id.isBlank()) continue
             out.add(
                 Book(
-                    id = normalizeId(a),
+                    id = id,
                     title = title,
                     author = pick(el, r.author)?.let(::cleanAuthor).orEmpty(),
                     source = Source.AGG,
@@ -414,6 +539,14 @@ class DeclarativeSource(
     /** 同一关键词的最近结果：节流窗口内重复搜同一个词直接复用，不浪费一次配额 */
     private val searchCache = HashMap<String, List<Book>>()
 
+    /**
+     * 每条搜索路径当前缓存的是哪个关键词。
+     *
+     * 7novel 这类站前面挂了"忽略 query 的全站页面缓存"：同一路径在 2 小时内对任何关键词
+     * 都返回**同一个**结果页。记住"路径 → 里面装着的词"，就能避开撞车、复用命中的缓存。
+     */
+    private val bucket = HashMap<String, Pair<String, Long>>()
+
     /** 会话建立时间；0 表示还没建 */
     @Volatile private var sessionAt = 0L
 
@@ -591,6 +724,9 @@ class DeclarativeSource(
 
         /** 最多愿意为一个站点等多久（聚合搜索单站超时 9 秒，别把整体拖死） */
         private const val MAX_BLOCK_MS = 3000L
+
+        /** 站点页面缓存的存活时间：2 小时内同一路径只装一个关键词（与响应头 max-age 一致） */
+        private const val BUCKET_TTL_MS = 2 * 60 * 60 * 1000L
 
         const val UA =
             "Mozilla/5.0 (Linux; Android 12; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) " +

@@ -66,6 +66,8 @@ fun SearchScreen(
     var trigger by remember { mutableIntStateOf(0) }
     // 0 = 关键词搜索，1 = 按类型浏览
     var mode by remember { mutableIntStateOf(0) }
+    // 聚合搜索时"部分站点失败"的原因：有结果也要显示，否则用户以为没接入
+    var siteNote by remember { mutableStateOf<String?>(null) }
     var shelfId by remember { mutableStateOf<String?>(null) }
 
     val source = Source.of(sourceKey)
@@ -86,6 +88,13 @@ fun SearchScreen(
                 books = it
                 hasMore = it.isNotEmpty()
                 searched = true
+                siteNote = if (source == Source.AGG) {
+                    app.sources.aggregateErrors().entries
+                        .joinToString("；") { e -> "${e.key}：${e.value}" }
+                        .takeIf { it.isNotBlank() }
+                } else {
+                    null
+                }
             }
             .onFailure { error = it.message ?: "搜索失败" }
         loading = false
@@ -246,6 +255,16 @@ fun SearchScreen(
                         fontSize = dims.label,
                         color = LocalPalette.current.muted,
                     )
+                }
+                // 部分站点没搜到（超时 / 站内搜索被占 / 证书问题）也要说出来
+                siteNote?.let { note ->
+                    item {
+                        Text(
+                            text = "未返回：$note",
+                            fontSize = dims.label,
+                            color = LocalPalette.current.muted,
+                        )
+                    }
                 }
                 item { Spacer(Modifier.height(10.dp)) }
             }

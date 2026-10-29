@@ -36,8 +36,16 @@ class SourceRegistry(context: Context, private val settings: SettingsStore) {
         Source.LOCAL -> local
     }
 
-    /** 用户在设置里选的默认源 */
+    /** 用户选的默认源 */
     fun current(): BookSource = of(Source.of(settings.value.sourceKey))
+
+    /**
+     * 上一次聚合搜索里每个站点的失败原因。
+     *
+     * 聚合是"部分成功也照常返回"，所以界面必须能把"谁没搜到、为什么"讲出来 ——
+     * 否则用户看到结果里少了一个源，只会以为是没接入。
+     */
+    fun aggregateErrors(): Map<String, String> = aggregate.lastErrors
 
     /**
      * 番茄登录自检：拿一段 Cookie 去试读探针章节。

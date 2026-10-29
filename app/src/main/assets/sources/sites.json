@@ -84,14 +84,15 @@
       "key": "seven",
       "name": "七小说 7novel",
       "base": "https://7novel.com",
-      "note": "站内搜索已失效 · 可贴书号/链接直接读",
+      "note": "站内搜索可用 · 也可贴书号/链接",
       "directSearch": true,
       "detail": {
         "path": "/cn/books/{id}",
         "title": "meta[property=og:title]@content",
         "titleTrim": " - 7novel.com",
         "intro": "meta[name=description]@content",
-        "cover": "img.object-cover@src"
+        "cover": "img.object-cover@src",
+        "author": "a[href*=author]"
       },
       "catalog": {
         "path": "/cn/books/{id}",
@@ -106,6 +107,23 @@
         "remove": [
           "script",
           "style"
+        ]
+      },
+      "search": {
+        "path": "https://7novel.com./cn%2Fbooks/?q={q}",
+        "echo": "div[data-flux-badge]",
+        "list": "div.grid.grid-cols-3 > div.group",
+        "title": "img@alt",
+        "link": "a[href*=/cn/books/]@href",
+        "linkStrip": "cn/books/",
+        "mirrors": [
+          "https://7novel.com./cn%2Fbooks?q={q}",
+          "https://7novel.com./cn/books/?q={q}",
+          "https://7novel.com./cn/books?q={q}",
+          "https://7novel.com/cn%2Fbooks/?q={q}",
+          "https://7novel.com/cn%2Fbooks?q={q}",
+          "https://7novel.com/cn/books/?q={q}",
+          "https://7novel.com/cn/books?q={q}"
         ]
       }
     }
