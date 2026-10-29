@@ -33,9 +33,12 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.CircularProgressIndicator
@@ -309,22 +312,31 @@ fun BookCard(
                         modifier = Modifier.padding(top = 1.dp),
                     )
                 }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.padding(top = 3.dp),
-                ) {
-                    // 只在"不是当前默认源"时贴个来源标签，单一来源时列表更干净
+                // 来源 / 分类 / 评分 / 完结以前是 3~5 个独立 Text（每个都要单独测量 + 布局 + 绘制），
+                // 一屏四张卡片就是二十来个节点。合成一段 AnnotatedString 之后只剩一个 Text，
+                // 滚动时省下的是每帧的测量次数 —— 手表上这点差别是能感觉到的。
+                val meta = buildAnnotatedString {
+                    val gap = "  "
+                    fun part(text: String, color: Color) {
+                        if (length > 0) append(gap)
+                        withStyle(SpanStyle(color = color)) { append(text) }
+                    }
                     if (book.source.key != app.settings.value.sourceKey) {
-                        MiniTag(book.source.label, sourceTint(book.source))
+                        part(book.source.label, sourceTint(book.source))
                     }
-                    if (book.category.isNotBlank()) MiniTag(book.category.take(4), p.accent.copy(alpha = 0.75f))
-                    if (book.score.isNotBlank()) {
-                        Text("★${book.score}", fontSize = dims.label, color = p.accent, maxLines = 1)
-                    }
-                    if (book.finished) {
-                        Text("完结", fontSize = dims.label, color = p.muted, maxLines = 1)
-                    }
+                    if (book.category.isNotBlank()) part(book.category.take(4), p.muted)
+                    if (book.score.isNotBlank()) part("★${book.score}", p.accent)
+                    if (book.finished) part("完结", p.muted)
+                }
+                if (meta.isNotEmpty()) {
+                    Text(
+                        text = meta,
+                        fontSize = dims.label,
+                        color = p.muted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 3.dp),
+                    )
                 }
             }
             Text("›", fontSize = dims.titleMedium, color = p.muted, modifier = Modifier.padding(start = 3.dp))

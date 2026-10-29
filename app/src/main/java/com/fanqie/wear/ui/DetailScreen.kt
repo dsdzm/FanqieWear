@@ -2,7 +2,9 @@ package com.fanqie.wear.ui
 
 import android.widget.Toast
 import androidx.compose.foundation.background
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +24,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -240,9 +243,12 @@ fun DetailScreen(
                     if (app.sources.of(source).capability.chapter) {
                         item {
                             val task = tasks[bookId]
-                            val localCount = remember(tasks, reload) {
-                                app.downloads.list().firstOrNull { it.bookId == bookId }?.done ?: 0
+                            // 已缓存章节数：跟 running 绑定，下载过程中直接用任务里的 done，
+                            // 不再每次进度刷新都把下载目录深度遍历一遍（那就是"下载时界面卡"的来源）
+                            val stored by produceState(0, bookId, task?.running) {
+                                value = withContext(Dispatchers.IO) { app.downloads.countOf(bookId) }
                             }
+                            val localCount = maxOf(stored, task?.done ?: 0)
                             GlassCard {
                                 Column(
                                     modifier = Modifier
@@ -252,7 +258,8 @@ fun DetailScreen(
                                     when {
                                         task?.running == true -> {
                                             Text(
-                                                text = "下载中 ${task.done}/${task.total.coerceAtLeast(1)} 章",
+                                                text = "下载中 ${task.done}/${task.total.coerceAtLeast(1)} 章" +
+                                                    if (task.failed > 0) " · ${task.failed} 章失败" else "",
                                                 fontSize = dims.titleSmall,
                                                 color = LocalPalette.current.text,
                                             )
@@ -292,6 +299,16 @@ fun DetailScreen(
                                                     text = "删除缓存",
                                                     compact = true,
                                                     onClick = { app.downloads.delete(bookId); reload++ },
+                                                )
+                                            }
+                                            if (task?.error != null) {
+                                                Spacer(Modifier.height(4.dp))
+                                                Text(
+                                                    text = task.error!!,
+                                                    fontSize = dims.label,
+                                                    color = LocalPalette.current.accent,
+                                                    maxLines = 3,
+                                                    overflow = TextOverflow.Ellipsis,
                                                 )
                                             }
                                         }

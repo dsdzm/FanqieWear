@@ -81,9 +81,15 @@ data class DeviceDims(
     val body: TextUnit,
     val label: TextUnit,
 ) {
-    /** 列表统一内边距 */
-    val listPadding: PaddingValues
-        get() = PaddingValues(start = sidePadding, end = sidePadding, top = topPadding, bottom = bottomPadding)
+    /**
+     * 列表统一内边距。
+     *
+     * 用 lazy 而不是 get()：`PaddingValues` 没有 equals，每次取值都造新对象的话，
+     * 列表会认为内边距变了、把可见条目全部重新测量 —— 滚动时肉眼可见地掉帧。
+     */
+    val listPadding: PaddingValues by lazy {
+        PaddingValues(start = sidePadding, end = sidePadding, top = topPadding, bottom = bottomPadding)
+    }
 
     val innerRadius: Dp get() = (widthDp / 2).dp - sidePadding
 }

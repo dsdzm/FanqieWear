@@ -2,7 +2,11 @@ package com.fanqie.wear.data
 
 import android.content.Context
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -84,6 +88,7 @@ class DownloadStore(context: Context) {
         total: Int,
         firstChapterId: String?,
         source: Source,
+        done: Int = -1,
     ) {
         val d = dir(bookId).apply { mkdirs() }
         val meta = JSONObject()
@@ -93,8 +98,26 @@ class DownloadStore(context: Context) {
             .put("total", total)
             .put("first", firstChapterId ?: "")
             .put("source", source.key)
+            .put("done", if (done >= 0) done else countFiles(d))
             .put("updatedAt", System.currentTimeMillis())
         File(d, "meta.json").writeText(meta.toString())
+    }
+
+    private fun countFiles(d: File): Int = d.listFiles { f -> f.name.endsWith(".txt") }?.size ?: 0
+
+    /**
+     * 这本书已经缓存了多少章。
+     *
+     * 下载过程中每章都会问一次，所以先看 meta 里记的 done，实在没有再数文件 ——
+     * 之前这里每次都走 [list]，等于每下一章就把整个下载目录深度遍历一遍，
+     * 又慢又把 UI 线程拖住（进度条一动就掉帧）。
+     */
+    fun countOf(bookId: String): Int {
+        val d = dir(bookId)
+        if (!d.isDirectory) return 0
+        val meta = runCatching { JSONObject(File(d, "meta.json").readText()) }.getOrNull()
+        val done = meta?.optInt("done", -1) ?: -1
+        return if (done >= 0) done else countFiles(d)
     }
 
     fun list(): List<DownloadedBook> {
@@ -136,6 +159,8 @@ data class DownloadTask(
     val done: Int = 0,
     val running: Boolean = true,
     val error: String? = null,
+    /** 已经试过但没下下来的章节数（站点超时/504 之类），可以再点「继续下载」补 */
+    val failed: Int = 0,
 ) {
     val progress: Float get() = if (total <= 0) 0f else (done.toFloat() / total).coerceIn(0f, 1f)
 }
@@ -146,48 +171,125 @@ data class DownloadTask(
  *
  * 按书源下载：目录与正文都从 [SourceRegistry] 里取，
  * 所以七猫那种没有正文的源会在开始时就报错，而不是下到一半全空。
+ *
+ * ## 单章失败不等于整本失败
+ *
+ * 七小说的章节页是逐章 SSR，源站一忙就回 Cloudflare 504（16 字节的 `error code: 504`），
+ * 抓 535 章必然有几章撞上。旧版把整个循环包在一个 runCatching 里 —— 第 300 章超时，
+ * 前面下好的 299 章还在，但任务直接变「失败」，界面上看起来就是"下不了"。
+ *
+ * 现在每章独立重试（[CHAPTER_TRIES] 次，退避递增），失败只跳过并计数，
+ * 整本照跑；结束后把「已下 X 章 / Y 章失败」一起报出来，再点一次就从缺的那章续传。
  */
 class DownloadManager(
     private val sources: SourceRegistry,
     private val store: DownloadStore,
     private val scope: CoroutineScope,
+    private val context: Context? = null,
 ) {
     private val _tasks = MutableStateFlow<Map<String, DownloadTask>>(emptyMap())
     val tasks: StateFlow<Map<String, DownloadTask>> = _tasks.asStateFlow()
 
     private val jobs = mutableMapOf<String, Job>()
 
-    fun isDownloaded(bookId: String): Boolean = store.list().any { it.bookId == bookId }
+    fun isDownloaded(bookId: String): Boolean = store.countOf(bookId) > 0
 
     fun start(bookId: String, title: String, cover: String?, source: Source, limit: Int = 0) {
         if (jobs[bookId]?.isActive == true) return
         _tasks.value = _tasks.value + (bookId to DownloadTask(bookId, title))
         jobs[bookId] = scope.launch {
-            runCatching {
+            var wake: android.os.PowerManager.WakeLock? = null
+            try {
                 val api = sources.of(source)
                 if (!api.capability.chapter) throw ApiException("${api.displayName} 暂不支持下载正文")
                 val chapters = api.catalog(bookId)
                 if (chapters.isEmpty()) throw ApiException("目录为空，无法下载")
                 val targets = if (limit > 0) chapters.take(limit) else chapters
-                var done = 0
-                for (ch in targets) {
-                    if (!store.has(bookId, ch.itemId)) {
-                        val c = api.chapter(bookId, ch.itemId)
-                        store.saveChapter(bookId, c)
-                        delay(150)
+                val total = targets.size
+                // 断点续传：已经落盘的章节直接跳过，重跑「下载全本」只补缺的那几章
+                val todo = targets.filterNot { store.has(bookId, it.itemId) }
+                var done = total - todo.size
+                var failed = 0
+                var lastError = ""
+
+                publish(bookId, title, total, done, failed)
+                // 屏幕一灭系统就会挂起协程，长下载必须在灭屏后继续跑
+                wake = acquireWakeLock()
+
+                // 一批几章并发：源站慢的时候能明显缩短总时长，又不会把站点打死
+                for (group in todo.chunked(CONCURRENCY)) {
+                    val results = coroutineScope {
+                        group.map { ch -> async(Dispatchers.IO) { ch to fetchOne(api, bookId, ch) } }
+                            .awaitAll()
                     }
-                    done++
-                    _tasks.value = _tasks.value + (bookId to DownloadTask(bookId, title, targets.size, done, true))
+                    for ((_, r) in results) {
+                        if (r != null) {
+                            store.saveChapter(bookId, r)
+                            done++
+                        } else {
+                            failed++
+                            if (lastError.isBlank()) lastError = "章节页超时（站点返回 504）"
+                        }
+                    }
+                    publish(bookId, title, total, done, failed)
                 }
-                store.writeMeta(bookId, title, cover, targets.size, targets.firstOrNull()?.itemId, source)
-                _tasks.value = _tasks.value + (bookId to DownloadTask(bookId, title, targets.size, done, false))
-            }.onFailure { e ->
+
+                store.writeMeta(bookId, title, cover, total, targets.firstOrNull()?.itemId, source, done)
+                val msg = when {
+                    done == 0 -> "一章都没下下来：$lastError"
+                    failed > 0 -> "已下载 $done 章，$failed 章失败（$lastError）· 可点「继续下载」补齐"
+                    else -> null
+                }
                 _tasks.value = _tasks.value + (
-                    bookId to DownloadTask(bookId, title, 0, 0, false, e.message ?: "下载失败")
+                    bookId to DownloadTask(bookId, title, total, done, false, msg, failed)
                     )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                val got = store.countOf(bookId)
+                val msg = if (got > 0) {
+                    "已下载 $got 章，中断：${e.message ?: e.javaClass.simpleName}"
+                } else {
+                    e.message ?: "下载失败"
+                }
+                _tasks.value = _tasks.value + (bookId to DownloadTask(bookId, title, 0, got, false, msg))
+            } finally {
+                runCatching { if (wake?.isHeld == true) wake?.release() }
+                jobs.remove(bookId)
             }
         }
     }
+
+    /**
+     * 取一章，失败重试。
+     *
+     * 除了异常，**正文太短也算失败**：七小说的正文容器里夹了一行没渲染的模板占位
+     * （`<img src="{{image_domain}}...">`），偶尔整页只回这一行，存下来就是空章。
+     */
+    private suspend fun fetchOne(
+        api: BookSource,
+        bookId: String,
+        ch: Chapter,
+    ): ChapterContent? {
+        for (i in 0 until CHAPTER_TRIES) {
+            val r = runCatching { api.chapter(bookId, ch.itemId) }.getOrNull()
+            if (r != null && r.content.trim().length >= 24) return r
+            if (i < CHAPTER_TRIES - 1) delay(500L * (i + 1))
+        }
+        return null
+    }
+
+    private fun publish(bookId: String, title: String, total: Int, done: Int, failed: Int) {
+        _tasks.value = _tasks.value + (bookId to DownloadTask(bookId, title, total, done, true, null, failed))
+    }
+
+    private fun acquireWakeLock(): android.os.PowerManager.WakeLock? = runCatching {
+        val pm = context?.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+        pm?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "fanqie:download")?.apply {
+            setReferenceCounted(false)
+            acquire(60L * 60L * 1000L)
+        }
+    }.getOrNull()
 
     fun cancel(bookId: String) {
         jobs[bookId]?.cancel()
@@ -198,5 +300,13 @@ class DownloadManager(
 
     fun dismiss(bookId: String) {
         _tasks.value = _tasks.value - bookId
+    }
+
+    private companion object {
+        /** 同时抓几章。七小说无登录、无频率限制，实测 3 路稳定 */
+        const val CONCURRENCY = 3
+
+        /** 单章最多试几次 */
+        const val CHAPTER_TRIES = 3
     }
 }

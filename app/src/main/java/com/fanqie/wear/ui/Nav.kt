@@ -156,9 +156,8 @@ fun FanqieWearApp() {
                                 .graphicsLayer {
                                     // 非转场时下层一律不画。
                                     // 页面内容本身多数是透明底（背景由全局 AppBackdrop 提供），
-                                    // 下层要是照常绘制，栈顶页的透明区域就会直接透出下面那页的内容
-                                    // —— 也就是"背景透明、能看到下层的字"。
-                                    // 组合树仍然保留（只是不绘制），返回时依旧不会重建。
+                                    // 下层要是照常绘制，栈顶页的透明区域就会直接透出下面那页的内容。
+                                    // 只有「真在退场」时才画下层 —— 那是返回动画本身需要。
                                     val shown = isTop || nav.revealing
                                     if (!shown) {
                                         alpha = 0f
@@ -168,6 +167,9 @@ fun FanqieWearApp() {
                                         scaleX = entry.fx.scale
                                         scaleY = entry.fx.scale
                                         alpha = entry.fx.alpha
+                                        // 拖动时的橡皮筋位移。位移不改透明度和缩放，
+                                        // 所以手指按歪了也只是这一页轻轻挪一下，看不到下面任何东西。
+                                        translationX = entry.fx.shiftX
                                     }
                                 },
                         ) {
@@ -248,9 +250,7 @@ private class NavController(private val scope: CoroutineScope) : NavBackHost {
     private var dragEntry: Entry? = null
     private var dragX = 0f
     private var thresholdPx = 1f
-    // 起手瞬间的缩放/透明度：入场动画没跑完就开始拖时，从当前值接着走而不是跳回 1
-    private var baseScale = 1f
-    private var baseAlpha = 1f
+    private var baseShift = 0f
 
     fun reset(initial: List<Dest>) {
         if (stack.isNotEmpty()) return
@@ -336,54 +336,52 @@ private class NavController(private val scope: CoroutineScope) : NavBackHost {
         if (transitioning) return
         this.thresholdPx = thresholdPx
         val e = stack.lastOrNull() ?: return
-        // 这一页可能还在跑入场/回弹动画，先掐掉，再以当前值为基准
+        // 这一页可能还在跑入场/回弹动画，先掐掉，再以当前位移为基准
         jobs.remove(e.id)?.cancel()
         dragEntry = e
         dragX = 0f
-        baseScale = e.fx.scale
-        baseAlpha = e.fx.alpha
-        // 跟手缩小期间要露出下面那页
-        revealing = true
+        baseShift = e.fx.shiftX
+        // 注意：这里**不打开** revealing。拖动过程中下层不绘制，
+        // 栈顶页也不变透明、不缩放，所以手指按歪时只有这一页轻轻挪一下，
+        // 绝不会透出下面那页的内容。
     }
 
-    override fun onDrag(dx: Float) {
+    override fun onDrag(dx: Float, maxShift: Float) {
         val e = dragEntry ?: return
         dragX = (dragX + dx).coerceAtLeast(0f)
-        val p = (dragX / thresholdPx).coerceIn(0f, 1f)
-        e.fx.scale = baseScale - NavFx.DRAG_SCALE * p
-        // 淡出下限 0.45：定格帧仍是可辨识的页面内容，不会像"闪白"
-        e.fx.alpha = (baseAlpha - NavFx.DRAG_ALPHA * smoothstep(p)).coerceIn(0.2f, 1f)
+        // 阻尼 + 封顶：手指划再远，页面也只挪一小段，漏出的永远是背景而不是别的页面
+        e.fx.shiftX = (baseShift + dragX * NavFx.DRAG_DAMP).coerceAtMost(maxShift)
     }
 
     override fun onDragEnd() {
         val e = dragEntry ?: return
         dragEntry = null
         if (transitioning) {
-            // 极少见：拖动期间被别的路径触发了出栈，直接归位，别把页面留在半透明状态
-            springBack(e, clearReveal = true)
+            // 极少见：拖动期间被别的路径触发了出栈，直接归位
+            springBack(e)
             return
         }
         if (dragX >= thresholdPx) {
             // 栈底右滑 = 退出应用
             if (stack.size <= 1) leave(e) { exitApp() } else leave(e)
         } else {
-            // 没到阈值：回弹，回弹结束就不必再画下层了
-            springBack(e, clearReveal = true)
+            // 没到阈值：位移弹回 0，全场只有这一页，不涉及下层
+            springBack(e)
         }
     }
 
     override fun onDragCancel() {
         val e = dragEntry ?: return
         dragEntry = null
-        springBack(e, clearReveal = true)
+        springBack(e)
     }
 
-    private fun springBack(e: Entry, clearReveal: Boolean = false) {
+    private fun springBack(e: Entry) {
         animatePage(
             scope, jobs, e.id, e.fx,
             toScale = 1f, toAlpha = 1f,
             ms = NavFx.SPRING_MS, easing = enterEase,
-        ) { if (clearReveal) revealing = false }
+        ) { revealing = false }
     }
 
     /** 稳定引用，避免每次组合都造新 lambda 触发整页重组 */

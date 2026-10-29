@@ -31,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -534,11 +535,19 @@ fun ReaderScreen(
         }
 
         if (settings.bottomProgress) {
-            val pct = if (settings.pageMode == 1) {
-                if (pages.isEmpty()) 0f else (page + 1).toFloat() / pages.size
-            } else {
-                val total = listState.layoutInfo.totalItemsCount
-                if (total == 0) 0f else (listState.firstVisibleItemIndex + 1).toFloat() / total
+            // 用 derivedStateOf 取值：直接在这里读 firstVisibleItemIndex，
+            // 会在每一帧滚动时把整个阅读页（正文、按钮、TTS 状态）重组一遍 —— 翻页发涩就是这么来的。
+            // 包一层之后只有进度条这一小块跟着变。
+            val pct by remember(settings.pageMode) {
+                derivedStateOf {
+                    if (settings.pageMode == 1) {
+                        val ps = pages
+                        if (ps.isEmpty()) 0f else (page + 1).toFloat() / ps.size
+                    } else {
+                        val total = listState.layoutInfo.totalItemsCount
+                        if (total == 0) 0f else (listState.firstVisibleItemIndex + 1).toFloat() / total
+                    }
+                }
             }
             Column(modifier = Modifier.fillMaxWidth().padding(horizontal = dims.sidePadding)) {
                 Box(

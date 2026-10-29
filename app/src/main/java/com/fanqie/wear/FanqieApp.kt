@@ -29,7 +29,7 @@ class FanqieApp : Application() {
     val shelf: ShelfStore by lazy { ShelfStore(this) }
     val tts: TtsPlayer by lazy { TtsPlayer(this) }
     val downloads: DownloadStore by lazy { DownloadStore(this) }
-    val downloader: DownloadManager by lazy { DownloadManager(sources, downloads, scope) }
+    val downloader: DownloadManager by lazy { DownloadManager(sources, downloads, scope, this) }
     val exporter: com.fanqie.wear.data.TxtExporter by lazy {
         com.fanqie.wear.data.TxtExporter(this, sources, sources.localLibrary)
     }

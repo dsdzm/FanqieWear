@@ -193,7 +193,10 @@ fun DownloadScreen(onBack: () -> Unit) {
     val state = rememberScalingLazyListState()
     val tasks by app.downloader.tasks.collectAsStateWithLifecycle()
     var tick by remember { mutableIntStateOf(0) }
-    val books = remember(tick, tasks) { app.downloads.list() }
+    // 只在「有没有任务在跑」变化时重读磁盘：任务每完成一章都会发一次新状态，
+    // 直接 remember(tasks) 等于每章都把下载目录深度遍历一遍，进度条一动就掉帧
+    val runningCount = tasks.count { it.value.running }
+    val books = remember(tick, runningCount) { app.downloads.list() }
     var info by remember { mutableStateOf("") }
 
     ScreenScaffold(

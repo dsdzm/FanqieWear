@@ -22,8 +22,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.wear.compose.foundation.lazy.AutoCenteringParams
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.AutoCenteringParams
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumnDefaults
 import androidx.wear.compose.foundation.lazy.ScalingLazyListScope
 import androidx.wear.compose.foundation.lazy.ScalingLazyListState
@@ -61,6 +61,18 @@ fun WearList(
             .collect { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
     }
 
+    // snapFlingBehavior / snapBehavior 本身就是 @Composable，内部已经 remember 住了返回值，
+    // 直接调用不会每次造新对象。真正每次现造的是 scalingParams 和 autoCentering（普通函数），
+    // 它们必须记住 —— 新对象会让列表认为参数变了，把可见条目全部重新测量一遍。
+    val scaling = remember {
+        ScalingLazyColumnDefaults.scalingParams(
+            minElementHeight = 0.34f,
+            maxElementHeight = 1f,
+            edgeScale = 0.5f,
+        )
+    }
+    val centering = remember { AutoCenteringParams() }
+
     ScalingLazyColumn(
         state = state,
         modifier = modifier.fillMaxSize(),
@@ -68,13 +80,9 @@ fun WearList(
         verticalArrangement = verticalArrangement,
         horizontalAlignment = Alignment.CenterHorizontally,
         flingBehavior = ScalingLazyColumnDefaults.snapFlingBehavior(state = state),
-        scalingParams = ScalingLazyColumnDefaults.scalingParams(
-            minElementHeight = 0.34f,
-            maxElementHeight = 1f,
-            edgeScale = 0.5f,
-        ),
+        scalingParams = scaling,
         rotaryScrollableBehavior = RotaryScrollableDefaults.snapBehavior(scrollableState = state),
-        autoCentering = AutoCenteringParams(),
+        autoCentering = centering,
         content = content,
     )
 }
