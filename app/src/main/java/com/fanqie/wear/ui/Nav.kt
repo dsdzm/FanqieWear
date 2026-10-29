@@ -16,12 +16,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.SaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalConfiguration
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
@@ -101,27 +100,22 @@ fun FanqieWearApp() {
 
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val motion = rememberNavMotion(scope)
-
-    val density = LocalDensity.current
-    val widthPx = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
-
-    val nav = remember { NavController().apply { reset(initial) } }
+    val nav = remember { NavController(scope).apply { reset(initial) } }
     // 幂等赋值，每次组合都刷新一遍，保证回调里拿到的是最新的
-    nav.motion = motion
     nav.stateHolder = stateHolder
-    nav.widthPx = widthPx
     nav.exitApp = { runCatching { context.findActivity()?.finish() } }
 
     val stack = nav.stack
 
     val settings by app.settings.state.collectAsStateWithLifecycle()
-    val display = DisplayConfig(
-        safeArea = SafeArea.of(settings.safeArea),
-        uiScale = UiScale.of(settings.uiScale),
-        showCover = settings.showCover,
-        haptics = settings.haptics,
-    )
+    val display = remember(settings.safeArea, settings.uiScale, settings.showCover, settings.haptics) {
+        DisplayConfig(
+            safeArea = SafeArea.of(settings.safeArea),
+            uiScale = UiScale.of(settings.uiScale),
+            showCover = settings.showCover,
+            haptics = settings.haptics,
+        )
+    }
 
     BackHandler(enabled = stack.size > 1) { nav.pop() }
 
@@ -130,7 +124,13 @@ fun FanqieWearApp() {
             val p = LocalPalette.current
             // 两个固定槽位常驻组合树：谁在上层只看栈序，页面本身不挪位置（挪位置 = 重建 = 闪）
             val slots = nav.slots
-            Box(modifier = Modifier.fillMaxSize().clipToBounds()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clipToBounds()
+                    // 手势挂最外层：任何时刻只有一个检测器，而且全屏起手都能返回
+                    .navSwipeBack(enabled = settings.edgeBack, host = nav),
+            ) {
                 AppBackdrop(
                     image = settings.bgImage,
                     blur = settings.bgBlur,
@@ -150,34 +150,14 @@ fun FanqieWearApp() {
                             modifier = Modifier
                                 .fillMaxSize()
                                 .zIndex(if (isTop) 1f else 0f)
-                                // 上层被移除后把焦点还给下层（否则返回后表冠/焦点全丢）
-                                .focusRestorer()
-                                // 变换层常驻：以前只在转场时才挂 graphicsLayer，
-                                // 挂/卸那一刻整页要重建图层，就是"控件闪一下"的来源
+                                // 变换值全部来自**这一页自己的** fx。
+                                // 旧版共用一份状态，出栈那一帧身份互换会读到对方的缩放值，
+                                // 于是保留下来的页面被缩一下再弹回 —— 就是"所有控件闪一下"。
                                 .graphicsLayer {
-                                    if (isTop) {
-                                        scaleX = motion.topScale
-                                        scaleY = motion.topScale
-                                        translationX = motion.topShift
-                                    } else {
-                                        scaleX = motion.belowScale
-                                        scaleY = motion.belowScale
-                                        // 非转场时整页挪到屏幕外：不参与绘制，也不会被点到
-                                        translationX = if (motion.active) 0f else -size.width
-                                    }
-                                }
-                                .then(
-                                    if (isTop) {
-                                        Modifier.navSwipeBack(
-                                            enabled = settings.edgeBack,
-                                            motion = motion,
-                                            onStart = { motion.dragStart() },
-                                            onCommit = { nav.back() },
-                                        )
-                                    } else {
-                                        Modifier
-                                    },
-                                ),
+                                    scaleX = entry.fx.scale
+                                    scaleY = entry.fx.scale
+                                    alpha = entry.fx.alpha
+                                },
                         ) {
                             CompositionLocalProvider(LocalPageActive provides isTop) {
                                 stateHolder.SaveableStateProvider(entry.dest.key()) {
@@ -196,22 +176,35 @@ fun FanqieWearApp() {
 private class Entry(val id: Long, val dest: Dest) {
     /** 0 = 先声明的一层，1 = 后声明的一层。谁在上层由 zIndex 决定，和槽位无关 */
     var slot: Int = -1
+
+    /** 这一页自己的转场状态。跟着页面走，出栈时不会和别的页面串值 */
+    val fx = PageFx()
 }
 
 /**
  * 导航栈。
  *
- * 关键点：Compose 按「位置」复用组合子树。如果直接把 `stack.takeLast(2)` 画出来，
- * 返回时栈顶-1 页会挪到原来栈顶的位置上，整棵子树被重建 —— 数据重新拉一遍，
- * 于是"退回来先白一下再刷出内容"，看起来就是闪一下；`remember` 的中间状态也会串页。
+ * ## 页面为什么不会重建
  *
- * 这里改成给每个页面绑定固定槽位（0/1），出栈时谁在上层只改 zIndex，页面不挪窝：
- *  - 返回时新栈顶原本就占着某个槽位，一直在组合树里，逐像素完整，不可能闪；
+ * Compose 按「位置」复用组合子树。如果直接把 `stack.takeLast(2)` 画出来，
+ * 返回时栈顶-1 页会挪到原来栈顶的位置上，整棵子树被重建 —— 数据重新拉一遍，
+ * 于是"退回来先白一下再刷出内容"，看起来就是闪；`remember` 的中间状态也会串页。
+ *
+ * 这里给每个页面绑定固定槽位（0/1），出入栈时**已经在槽里的页面绝不换槽**，
+ * 新露出的页面去填空位。于是：
+ *  - 返回时新栈顶原本就占着某个槽位、一直在组合树里，逐像素完整；
  *  - 栈深 3 层以上时最底下那层被移出渲染，等它重新需要时也是先出现在**下层**
- *    （屏幕外、不可见），等它变成栈顶时早已组合完毕。
+ *    （被栈顶完全盖住、不可见），等它变成栈顶时早已组合完毕。
+ *
+ * ## 动画为什么不会闪
+ *
+ * 转场状态绑在 [Entry.fx] 上，只有"正在入场/出场的那一页"会变：
+ *  - 入栈：新页 0.94 → 1，旧页一动不动（被新页完全盖住）；
+ *  - 出栈：只有要走的那页缩到 0.5 并淡到 0，**下层页面 scale/alpha 恒为 1**。
+ *    它被移除的那一帧，屏幕上本来就是下层 1:1 的完整画面，没有任何一帧需要补。
  */
 @Stable
-private class NavController {
+private class NavController(private val scope: CoroutineScope) : NavBackHost {
 
     var stack by mutableStateOf<List<Entry>>(emptyList())
         private set
@@ -220,15 +213,23 @@ private class NavController {
     var slots by mutableStateOf<List<Entry?>>(listOf(null, null))
         private set
 
-    var motion: NavMotion? = null
     var stateHolder: SaveableStateHolder? = null
-    var widthPx: Float = 0f
     var exitApp: () -> Unit = {}
 
     private var seq = 0L
 
-    /** 正在执行出栈/退场，防止重入。注意不能用 motion.active：手势拖拽期间它本来就是 true */
+    /** 正在执行出栈/退场，防止重入。注意不能用 fx 的值判断：拖拽期间它本来就不是 1 */
     private var transitioning = false
+
+    private val jobs = HashMap<Long, Job>()
+
+    // ---- 手势状态 ----
+    private var dragEntry: Entry? = null
+    private var dragX = 0f
+    private var thresholdPx = 1f
+    // 起手瞬间的缩放/透明度：入场动画没跑完就开始拖时，从当前值接着走而不是跳回 1
+    private var baseScale = 1f
+    private var baseAlpha = 1f
 
     fun reset(initial: List<Dest>) {
         if (stack.isNotEmpty()) return
@@ -257,46 +258,98 @@ private class NavController {
     }
 
     fun push(d: Dest) {
-        val m = motion ?: return
-        // 动画没走完不接新指令，避免连点叠两层
-        if (transitioning || m.active) return
+        if (transitioning) return
         val e = Entry(seq++, d)
+        // 新页从略小开始放大。旧页不动 —— 它已经被新页完全盖住，动它只会白白多画一层
+        e.fx.scale = NavFx.ENTER_SCALE
         stack = stack + e
         assignSlots()
-        m.forward()
+        animatePage(
+            scope, jobs, e.id, e.fx,
+            toScale = 1f, toAlpha = 1f,
+            ms = NavFx.ENTER_MS, easing = enterEase,
+        ) { jobs.remove(e.id) }
     }
 
     fun pop() {
-        val m = motion ?: return
         if (stack.size <= 1 || transitioning) return
+        leave(stack.last())
+    }
+
+    /**
+     * 一页退场：缩到 0.5 + 淡到 0，结束后才真正出栈。
+     *
+     * 缩小而不是横向滑出（照网易云）：滑出会把"两个页面并排"怼到眼前，
+     * 缩放 + 淡出则是「这一页收走，露出下面本来就完整的页面」。
+     */
+    private fun leave(e: Entry, onGone: (() -> Unit)? = null) {
         transitioning = true
-        val leaving = stack.last()
-        m.exit(widthPx) {
-            // 上层滑出屏幕后在同一帧摘掉它，新栈顶（刚才的下层）本来就完整
-            stack = stack.dropLast(1)
-            assignSlots()
-            if (stack.none { it.dest.key() == leaving.dest.key() }) {
-                stateHolder?.removeState(leaving.dest.key())
+        animatePage(
+            scope, jobs, e.id, e.fx,
+            toScale = NavFx.EXIT_SCALE, toAlpha = 0f,
+            ms = NavFx.EXIT_MS, easing = exitEase,
+        ) {
+            if (onGone != null) {
+                onGone()
+            } else {
+                stack = stack.dropLast(1)
+                assignSlots()
+                if (stack.none { it.dest.key() == e.dest.key() }) {
+                    stateHolder?.removeState(e.dest.key())
+                }
             }
-            m.settle()
+            jobs.remove(e.id)
             transitioning = false
         }
     }
 
-    /** 右滑提交：还有上一页就返回，没有就退出应用 */
-    fun back() {
-        val m = motion ?: return
-        if (stack.size > 1) {
-            pop()
-            return
-        }
+    // ---------------- 手势 ----------------
+
+    override fun onDragStart(thresholdPx: Float) {
         if (transitioning) return
-        transitioning = true
-        m.exit(widthPx) {
-            exitApp()
-            m.settle()
-            transitioning = false
+        this.thresholdPx = thresholdPx
+        val e = stack.lastOrNull() ?: return
+        // 这一页可能还在跑入场/回弹动画，先掐掉，再以当前值为基准
+        jobs.remove(e.id)?.cancel()
+        dragEntry = e
+        dragX = 0f
+        baseScale = e.fx.scale
+        baseAlpha = e.fx.alpha
+    }
+
+    override fun onDrag(dx: Float) {
+        val e = dragEntry ?: return
+        dragX = (dragX + dx).coerceAtLeast(0f)
+        val p = (dragX / thresholdPx).coerceIn(0f, 1f)
+        e.fx.scale = baseScale - NavFx.DRAG_SCALE * p
+        // 淡出下限 0.45：定格帧仍是可辨识的页面内容，不会像"闪白"
+        e.fx.alpha = (baseAlpha - NavFx.DRAG_ALPHA * smoothstep(p)).coerceIn(0.2f, 1f)
+    }
+
+    override fun onDragEnd() {
+        val e = dragEntry ?: return
+        dragEntry = null
+        if (transitioning) return
+        if (dragX >= thresholdPx) {
+            // 栈底右滑 = 退出应用
+            if (stack.size <= 1) leave(e) { exitApp() } else leave(e)
+        } else {
+            springBack(e)
         }
+    }
+
+    override fun onDragCancel() {
+        val e = dragEntry ?: return
+        dragEntry = null
+        springBack(e)
+    }
+
+    private fun springBack(e: Entry) {
+        animatePage(
+            scope, jobs, e.id, e.fx,
+            toScale = 1f, toAlpha = 1f,
+            ms = NavFx.SPRING_MS, easing = enterEase,
+        )
     }
 
     /** 稳定引用，避免每次组合都造新 lambda 触发整页重组 */

@@ -616,7 +616,7 @@ fun SettingsDetailScreen(page: Int, onBack: () -> Unit, onLogin: () -> Unit = {}
                         }
                     }
                     item {
-                        SwitchCard("右滑返回", "在页面左侧向右滑，返回上一页", s.edgeBack) {
+                        SwitchCard("右滑返回", "屏幕任意位置向右滑，返回上一页", s.edgeBack) {
                             app.settings.update { it.copy(edgeBack = it.edgeBack.not()) }
                         }
                     }
