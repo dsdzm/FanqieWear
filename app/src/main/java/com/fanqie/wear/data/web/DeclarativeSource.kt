@@ -14,6 +14,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -26,6 +27,7 @@ import java.io.File
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import org.jsoup.nodes.Entities
 import org.jsoup.nodes.Node
 import org.jsoup.nodes.TextNode
 
@@ -426,27 +428,114 @@ class DeclarativeSource(
 
     /** 从整页 HTML 里抠出内嵌的 `[{id,title},...]` 数组 */
     private fun parseJsonCatalog(doc: Document): ArrayList<Chapter> {
-        val html = doc.outerHtml()
         val marker = rule.catalog.list
-        val at = html.indexOf(marker)
-        if (at < 0) throw ApiException("${rule.name} 没找到目录数据（站点可能改版了）")
-        val from = html.indexOf('[', at + marker.length)
-        val to = matchBracket(html, from)
-        if (from < 0 || to < 0) throw ApiException("${rule.name} 目录数据不完整")
-        val arr = runCatching {
-            Json.parseToJsonElement(html.substring(from, to + 1)).jsonArray
-        }.getOrElse { throw ApiException("${rule.name} 目录解析失败：${it.message?.take(30)}") }
+        val blobs = catalogBlobs(doc, marker)
+        if (blobs.isEmpty()) throw ApiException("${rule.name} 没找到目录数据（站点可能改版了）")
 
-        val out = ArrayList<Chapter>(arr.size)
-        for (e in arr) {
-            val obj = runCatching { e.jsonObject }.getOrNull() ?: continue
-            val id = obj["id"]?.jsonPrimitive?.contentOrNull ?: continue
-            val title = obj["title"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
-            if (title.isBlank()) continue
+        for (blob in blobs) {
+            val arr = parseLenientArray(blob) ?: continue
+            val out = ArrayList<Chapter>(arr.size)
+            for (e in arr) {
+                val obj = runCatching { e.jsonObject }.getOrNull() ?: continue
+                val id = obj["id"]?.jsonPrimitive?.contentOrNull ?: continue
+                val title = obj["title"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+                if (title.isBlank()) continue
+                val item = rule.catalog.link.replace("{id}", id).replace("{num}", id)
+                out.add(Chapter(itemId = item.trim('/'), title = title))
+            }
+            if (out.isNotEmpty()) return out
+        }
+
+        // 结构实在不合法（少逗号、单引号、裸 id）时退回按字段抠，比整页报错强
+        val salvaged = salvageIdTitle(blobs.first())
+        if (salvaged.isNotEmpty()) return salvaged
+        throw ApiException("${rule.name} 目录解析失败（站点格式变了）")
+    }
+
+    /**
+     * 目录 JSON 大概率躺在 `x-data` / `data-*` 这类属性里。
+     *
+     * 注意不能只看 [Document.outerHtml]：jsoup 序列化属性时会把里面的 `"` 转成 `&quot;`，
+     * 抠出来就不是 JSON 了（表现是 `unexpected json token at offset 0`）。
+     * 属性值的原始形态（`Attribute.value`）是已解转义的，先读它；再退到 `<script>` 与整页。
+     */
+    private fun catalogBlobs(doc: Document, marker: String): List<String> {
+        if (marker.isBlank()) return emptyList()
+        val out = ArrayList<String>(4)
+        fun take(s: String?) {
+            if (s != null && out.none { it == s }) out.add(s)
+        }
+        for (el in doc.getAllElements()) {
+            for (attr in el.attributes()) {
+                val v = attr.value
+                if (v.contains(marker)) take(slice(marker, v))
+            }
+        }
+        for (el in doc.select("script")) {
+            val v = el.data()
+            if (v.contains(marker)) take(slice(marker, v))
+        }
+        val html = doc.outerHtml()
+        if (html.contains(marker)) take(slice(marker, Entities.unescape(html)))
+        return out
+    }
+
+    /** marker 之后第一个 `[` 到与它配对的 `]` */
+    private fun slice(marker: String, s: String): String? {
+        val at = s.indexOf(marker)
+        if (at < 0) return null
+        val from = s.indexOf('[', at + marker.length)
+        if (from < 0) return null
+        val to = matchBracket(s, from)
+        if (to < 0) return null
+        return s.substring(from, to + 1)
+    }
+
+    /** 先按标准 JSON 解；不行再把 `&quot;` 之类当引号解一次 */
+    private fun parseLenientArray(blob: String): JsonArray? {
+        val candidates = listOf(blob, Entities.unescape(blob), blob.replace('\'', '"'))
+        for (c in candidates) {
+            val arr = runCatching { Json.parseToJsonElement(c).jsonArray }.getOrNull()
+            if (arr != null) return arr
+        }
+        return null
+    }
+
+    /** 最后兜底：直接按 "id"/"title" 字段抓，容忍尾逗号、单引号、未加引号的 id */
+    private fun salvageIdTitle(blob: String): ArrayList<Chapter> {
+        val out = ArrayList<Chapter>()
+        val re = Regex("\"id\"\\s*:\\s*\"?([0-9A-Za-z_-]+)\"?\\s*,\\s*\"title\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"")
+        for (m in re.findAll(blob)) {
+            val id = m.groupValues[1]
+            val title = jsonUnescape(m.groupValues[2]).trim()
+            if (id.isBlank() || title.isBlank()) continue
             val item = rule.catalog.link.replace("{id}", id).replace("{num}", id)
             out.add(Chapter(itemId = item.trim('/'), title = title))
         }
         return out
+    }
+
+    /** 处理 `\u7b2c`、`\"`、`\\`、`\/`、`\n` 这些 JSON 转义 */
+    private fun jsonUnescape(s: String): String {
+        if (s.indexOf('\\') < 0) return s
+        val sb = StringBuilder(s.length)
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            if (c != '\\' || i + 1 >= s.length) { sb.append(c); i++; continue }
+            when (val n = s[i + 1]) {
+                'u' -> {
+                    val hex = s.substring(i + 2, minOf(i + 6, s.length))
+                    val code = runCatching { hex.toInt(16) }.getOrDefault(-1)
+                    if (code > 0) { sb.append(code.toChar()); i += 6 } else { sb.append(n); i += 2 }
+                }
+                'n' -> { sb.append('\n'); i += 2 }
+                'r' -> { sb.append('\r'); i += 2 }
+                't' -> { sb.append('\t'); i += 2 }
+                else -> { sb.append(n); i += 2 }
+            }
+        }
+        return sb.toString()
     }
 
     /** 从 '[' 开始找配对的 ']'，跳过字符串里的括号 */
